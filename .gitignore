@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+.env
+*.local
+.vite
+.DS_Store
+server/data.json
+server/data.json.migrated
+server/whale.db
+server/whale.db-shm
+server/whale.db-wal

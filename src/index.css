@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0b0e11;
+  color: #eaecef;
+  font-family: Inter, system-ui, sans-serif;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin dark scrollbars to match exchange UI */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2b3139 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2b3139;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Vertical "joystick" range input */
+input[type='range'].joystick {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #FF5252 0%, #2b3139 50%, #00E676 100%);
+  outline: none;
+}
+input[type='range'].joystick::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #eaecef;
+  border: 3px solid #0b0e11;
+  cursor: grab;
+  box-shadow: 0 0 0 1px #2b3139;
+}
+input[type='range'].joystick::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #eaecef;
+  border: 3px solid #0b0e11;
+  cursor: grab;
+}
+
+input[type='range'].lev {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: #2b3139;
+  outline: none;
+}
+input[type='range'].lev::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f0b90b;
+  cursor: pointer;
+}
+input[type='range'].lev::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f0b90b;
+  border: none;
+  cursor: pointer;
+}

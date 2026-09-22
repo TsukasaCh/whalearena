@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: whale-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: whale
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whale}
+      POSTGRES_DB: whale
+    volumes:
+      # accounts & balances persist here across restarts/redeploys
+      - whale-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U whale -d whale"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  whale-arena:
+    build: .
+    image: whale-arena:latest
+    container_name: whale-arena
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # host:container — change the left side if 8787 is taken on your server
+      - "8787:8787"
+    environment:
+      PORT: 8787
+      # the Whale/admin login code (/whale-god). Set it in a .env file next to this.
+      WHALE_HOST_CODE: ${WHALE_HOST_CODE:-whale-god}
+      # points the app at the Postgres service above — no manual DB setup needed
+      DATABASE_URL: postgres://whale:${POSTGRES_PASSWORD:-whale}@db:5432/whale
+
+volumes:
+  whale-db:

@@ -1,0 +1,20 @@
+node_modules
+dist
+dist-ssr
+.vite
+.git
+.gitignore
+.claude
+*.local
+.DS_Store
+npm-debug.log*
+# never bake the local DB into the image — it lives in the /data volume
+server/whale.db
+server/whale.db-shm
+server/whale.db-wal
+server/data.json
+server/data.json.migrated
+Dockerfile
+.dockerignore
+docker-compose.yml
+README.md
