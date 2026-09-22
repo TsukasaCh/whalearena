@@ -7,7 +7,7 @@ import { existsSync } from 'fs'
 import { MarketHub } from './engine.js'
 import { TICK_MS, DEFAULT_SYMBOL } from './constants.js'
 import { initStorage } from './storage.js'
-import { register, login, hostLogin, verify, getAccount, saveAccount, topTraders } from './auth.js'
+import { register, login, hostLogin, verify, getAccount, saveAccount, topTraders, HOST_CODE, HOST_CODE_FROM_ENV } from './auth.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 8787
@@ -189,5 +189,5 @@ setInterval(() => {
 
 server.listen(PORT, () => {
   console.log(`🐋 Whale Arena server on http://localhost:${PORT}  (ws: /ws)`)
-  console.log(`   Storage: ${process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite'} · Host code: ${process.env.WHALE_HOST_CODE ? '(from env)' : 'whale-god'}`)
+  console.log(`   Storage: ${process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite'} · Host code: ${HOST_CODE_FROM_ENV ? '(from env)' : `${HOST_CODE}  (random — set WHALE_HOST_CODE to pin it)`}`)
 })

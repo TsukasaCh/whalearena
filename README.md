@@ -130,8 +130,10 @@ and share the printed URL.
 
 ### Admin code
 
-The Whale/admin login (at **`/whale-god`**) is gated by a secret code
-(default **`whale-god`**). Change it:
+The Whale/admin login (at **`/whale-god`**) is gated by a secret code. If you
+don't set one, the server generates a **random code at every boot** and prints
+it to the console (`Host code: …`) — so the endpoint is never left on a
+guessable default. To pin your own code instead:
 
 ```bash
 # Windows PowerShell

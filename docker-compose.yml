@@ -30,7 +30,9 @@ services:
     environment:
       PORT: 8787
       # the Whale/admin login code (/whale-god). Set it in a .env file next to this.
-      WHALE_HOST_CODE: ${WHALE_HOST_CODE:-whale-god}
+      # If left unset, the server generates a random code at boot — read it from
+      # `docker compose logs whale` (or set WHALE_HOST_CODE to pin your own).
+      WHALE_HOST_CODE: ${WHALE_HOST_CODE:-}
       # points the app at the Postgres service above — no manual DB setup needed
       DATABASE_URL: postgres://whale:${POSTGRES_PASSWORD:-whale}@db:5432/whale
 

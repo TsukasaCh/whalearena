@@ -2,7 +2,11 @@ import { scryptSync, randomBytes } from 'crypto'
 import { storage } from './storage.js'
 import { INITIAL_BALANCE } from './constants.js'
 
-const HOST_CODE = process.env.WHALE_HOST_CODE || 'whale-god'
+// Gate for the Whale/admin login (/whale-god). Prefer the env var; otherwise
+// generate a fresh random code each boot (printed to the server console) so the
+// endpoint is never protected by a guessable default like the URL itself.
+export const HOST_CODE = process.env.WHALE_HOST_CODE || randomBytes(6).toString('hex')
+export const HOST_CODE_FROM_ENV = !!process.env.WHALE_HOST_CODE
 const round = (n) => Math.round(n * 100) / 100
 
 const tokens = new Map() // token -> { name, role } (in-memory; reset on restart)
