@@ -135,17 +135,23 @@ export class MarketHub {
     if (!margin || margin <= 0) return { ok: false, error: 'Invalid margin' }
     if (margin > u.balance) return { ok: false, error: 'Insufficient balance' }
     if (!['long', 'short'].includes(side)) return { ok: false, error: 'Bad side' }
-    // market taker WALKS the book: entry is the size-weighted fill across the
-    // real resting bot levels it consumes (natural slippage), worse than mid
-    const qtyMid = qtyFromMargin(margin, leverage, m.price)
-    const entry = m.walkBook(side, qtyMid)
+    // validate BEFORE walking: the walk fills other users' limit orders
+    const cur = m.books.get(id)
+    if (cur?.position && cur.position.side !== side) return { ok: false, error: 'Tutup posisi dulu untuk balik arah' }
+    if (cur?.pendingOrders.some((o) => o.side !== side)) return { ok: false, error: 'Cancel limit order sisi sebaliknya dulu' }
     const book = m.book(id)
+    // market taker WALKS the book: entry is the size-weighted fill across the
+    // resting levels it consumes — other users' limit orders at their price, then
+    // bot liquidity (natural slippage), worse than mid
+    const qtyMid = qtyFromMargin(margin, leverage, m.price)
+    const { price: entry, userQty } = m.walkBook(side, qtyMid, id)
     const addQty = qtyFromMargin(margin, leverage, entry)
+    // only the part that hit bot liquidity pushes price; user makers absorbed the rest
+    const flow = Math.max(0, addQty - userQty)
     if (book.position) {
-      if (book.position.side !== side) return { ok: false, error: 'Tutup posisi dulu untuk balik arah' }
       m.dcaInto(book.position, addQty, entry, margin)
       u.balance = round(u.balance - margin)
-      m.pendingFlow += side === 'long' ? addQty : -addQty
+      m.pendingFlow += side === 'long' ? flow : -flow
       this.dirty.add(id)
       return { ok: true, user: u, symbol, added: true }
     }
@@ -161,7 +167,7 @@ export class MarketHub {
     }
     book.position = { side, entry: m.r(entry), leverage, margin, qty: m.rq(addQty), sl: cleanSl, tp: cleanTp, liq, openedAt: Date.now() }
     u.balance = round(u.balance - margin)
-    m.pendingFlow += side === 'long' ? addQty : -addQty
+    m.pendingFlow += side === 'long' ? flow : -flow
     this.dirty.add(id)
     return { ok: true, user: u, symbol }
   }
@@ -174,10 +180,11 @@ export class MarketHub {
     if (!book || !book.position) return { ok: false }
     const pos = book.position
     // closing is a market order in the OPPOSITE direction — it walks the book too
-    const exit = m.walkBook(pos.side === 'long' ? 'short' : 'long', pos.qty)
+    const { price: exit, userQty } = m.walkBook(pos.side === 'long' ? 'short' : 'long', pos.qty, id)
     const pnl = unrealizedPnl(pos.side, pos.entry, exit, pos.qty)
     u.balance = round(u.balance + pos.margin + pnl)
-    m.pendingFlow += pos.side === 'long' ? -pos.qty : pos.qty
+    const flow = Math.max(0, pos.qty - userQty)
+    m.pendingFlow += pos.side === 'long' ? -flow : flow
     u.trades += 1
     if (pnl > 0) u.wins += 1
     u.realized = round(u.realized + pnl)

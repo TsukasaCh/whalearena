@@ -103,6 +103,7 @@ export class Market {
     this.seedPrice = cfg.price
     this.settle = settle
     this.books = new Map() // userId -> { position, pendingOrders: [] }
+    this.makerEvents = [] // limit fills from market orders, flushed with the next tick
     this.reset(true)
   }
 
@@ -387,17 +388,38 @@ export class Market {
   // a market order walks the book: consume levels from the touch outward, return
   // the size-weighted average fill price, and leave the eaten levels thin (they
   // refill over the next ticks). Overflow past the book extrapolates via depth.
-  walkBook(side, qty) {
-    if (!qty || qty <= 0) return this.price
+  // Real users' resting limit orders on the opposite side are part of the book:
+  // the taker trades against them at THEIR price (the maker gets filled right
+  // away), ahead of bot liquidity at the same price. `takerId` is skipped so a
+  // user never trades with their own order.
+  // Returns { price, userQty } — userQty is the part matched against real makers.
+  walkBook(side, qty, takerId) {
+    if (!qty || qty <= 0) return { price: this.price, userQty: 0 }
     const isBuy = side === 'long'
     const map = isBuy ? this.asks : this.bids
-    const levels = [...map.values()].sort((a, b) => (isBuy ? a.price - b.price : b.price - a.price))
-    let remaining = qty, cost = 0, filled = 0, worst = this.price
+    const levels = [...map.values()].map((lvl) => ({ price: lvl.price, bot: lvl }))
+    const makerSide = isBuy ? 'short' : 'long'
+    for (const [uid, book] of this.books) {
+      if (uid === takerId) continue
+      for (const o of book.pendingOrders) {
+        if (o.side === makerSide && o.qty - o.filled > 1e-9) levels.push({ price: o.price, uid, book, o })
+      }
+    }
+    levels.sort((a, b) => (isBuy ? a.price - b.price : b.price - a.price) || (a.bot ? 1 : 0) - (b.bot ? 1 : 0))
+    let remaining = qty, cost = 0, filled = 0, worst = this.price, userQty = 0
     for (const lvl of levels) {
       if (remaining <= 1e-12) break
-      const take = Math.min(remaining, lvl.qty)
-      if (take <= 0) continue
-      cost += take * lvl.price; filled += take; remaining -= take; lvl.qty -= take; worst = lvl.price
+      let take
+      if (lvl.bot) {
+        take = Math.min(remaining, lvl.bot.qty)
+        if (take <= 0) continue
+        lvl.bot.qty -= take
+      } else {
+        take = this.fillLimitOrder(lvl.uid, lvl.book, lvl.o, remaining, this.makerEvents)
+        if (take <= 0) continue
+        userQty += take
+      }
+      cost += take * lvl.price; filled += take; remaining -= take; worst = lvl.price
     }
     if (remaining > 1e-9) {
       const rho = this.depth()
@@ -406,7 +428,7 @@ export class Market {
       cost += remaining * (worst + ovp) / 2; filled += remaining; worst = ovp
     }
     const avg = filled > 0 ? cost / filled : this.price
-    return this.r(clamp(avg, this.price * 0.5, this.price * 2))
+    return { price: this.r(clamp(avg, this.price * 0.5, this.price * 2)), userQty }
   }
   // compact top-of-book for the client (real bot liquidity, per level)
   bookSnapshot() {
@@ -457,9 +479,10 @@ export class Market {
     return out
   }
 
+  // fills (part of) a resting user limit order; returns the qty actually filled
   fillLimitOrder(uid, book, o, df, userEvents) {
     df = Math.min(df, o.qty - o.filled)
-    if (df <= 1e-12) return
+    if (df <= 1e-12) return 0
     const entry = o.price
     const marginShare = o.margin * (df / o.qty)
     if (!book.position) {
@@ -471,12 +494,13 @@ export class Market {
     } else if (book.position.side === o.side) {
       this.dcaInto(book.position, df, entry, marginShare)
     } else {
-      return
+      return 0
     }
     o.filled += df
     const done = o.qty - o.filled <= 1e-9
     if (done) book.pendingOrders = book.pendingOrders.filter((x) => x.id !== o.id)
     userEvents.push({ userId: uid, symbol: this.symbol, event: { type: 'limitFill', symbol: this.symbol, side: o.side, price: entry, partial: !done, id: Date.now() + Math.random() } })
+    return df
   }
 
   mm(cmd, payload = {}) {
@@ -623,7 +647,9 @@ export class Market {
     this.baseCurrent = baseCurrent
 
     // resolve real traders' positions in this market
-    const userEvents = []
+    // maker fills that happened between ticks (market orders hitting user limits)
+    const userEvents = this.makerEvents
+    this.makerEvents = []
     let liqLong = 0
     let liqShort = 0
     for (const [uid, book] of this.books) {
