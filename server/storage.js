@@ -6,6 +6,7 @@ import { INITIAL_BALANCE } from './constants.js'
 
 const round = (n) => Math.round(n * 100) / 100
 const USE_PG = !!process.env.DATABASE_URL
+const toJson = (v, empty) => (v == null ? empty : JSON.stringify(v))
 
 let backend
 
@@ -33,6 +34,18 @@ async function makeSqlite() {
   addCol('trades', 'trades INTEGER NOT NULL DEFAULT 0')
   addCol('wins', 'wins INTEGER NOT NULL DEFAULT 0')
   addCol('realized', 'realized REAL NOT NULL DEFAULT 0')
+  // open positions / resting limit orders per symbol + recent trade history, as
+  // JSON, so they survive the browser closing AND the server restarting
+  addCol('books', "books TEXT NOT NULL DEFAULT '{}'")
+  addCol('history', "history TEXT NOT NULL DEFAULT '[]'")
+  // per-symbol market state (price, anchor, candle history) so prices resume after a restart
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS markets (
+      symbol     TEXT PRIMARY KEY,
+      state      TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `)
 
   // one-time migration from the legacy JSON store, if present
   const JSON_FILE = join(__dir, 'data.json')
@@ -53,15 +66,21 @@ async function makeSqlite() {
 
   const qGet = db.prepare('SELECT * FROM users WHERE name_key = ?')
   const qInsert = db.prepare('INSERT INTO users (name_key,name,salt,hash,balance,created_at) VALUES (?,?,?,?,?,?)')
-  const qSave = db.prepare('UPDATE users SET balance=?, trades=?, wins=?, realized=? WHERE name_key=?')
+  const qSave = db.prepare('UPDATE users SET balance=?, trades=?, wins=?, realized=?, books=?, history=? WHERE name_key=?')
   const qTop = db.prepare('SELECT name, balance, trades, wins, realized FROM users ORDER BY balance DESC LIMIT ?')
+  const qActive = db.prepare("SELECT * FROM users WHERE books <> '{}'")
+  const qMarketSave = db.prepare('INSERT INTO markets (symbol,state,updated_at) VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at')
+  const qMarkets = db.prepare('SELECT symbol, state FROM markets')
 
   return {
     kind: 'sqlite',
     async findUser(key) { return qGet.get(key) || null },
     async createUser({ nameKey, name, salt, hash, balance }) { qInsert.run(nameKey, name, salt, hash, balance, Date.now()) },
-    async saveAccount(key, { balance, trades, wins, realized }) { qSave.run(round(balance), trades | 0, wins | 0, round(realized), key) },
+    async saveAccount(key, f) { qSave.run(round(f.balance), f.trades | 0, f.wins | 0, round(f.realized), toJson(f.books, '{}'), toJson(f.history, '[]'), key) },
     async topTraders(limit) { return qTop.all(limit) },
+    async activeUsers() { return qActive.all() },
+    async saveMarket(symbol, state) { qMarketSave.run(symbol, state, Date.now()) },
+    async loadMarkets() { return qMarkets.all() },
   }
 }
 
@@ -90,6 +109,15 @@ async function makePostgres() {
       created_at BIGINT NOT NULL
     );
   `)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS books TEXT NOT NULL DEFAULT '{}'`)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS history TEXT NOT NULL DEFAULT '[]'`)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS markets (
+      symbol     TEXT PRIMARY KEY,
+      state      TEXT NOT NULL,
+      updated_at BIGINT NOT NULL
+    );
+  `)
   console.log('Connected to PostgreSQL')
   return {
     kind: 'postgres',
@@ -100,13 +128,25 @@ async function makePostgres() {
     async createUser({ nameKey, name, salt, hash, balance }) {
       await pool.query('INSERT INTO users (name_key,name,salt,hash,balance,created_at) VALUES ($1,$2,$3,$4,$5,$6)', [nameKey, name, salt, hash, balance, Date.now()])
     },
-    async saveAccount(key, { balance, trades, wins, realized }) {
-      await pool.query('UPDATE users SET balance=$1, trades=$2, wins=$3, realized=$4 WHERE name_key=$5', [round(balance), trades | 0, wins | 0, round(realized), key])
+    async saveAccount(key, f) {
+      await pool.query('UPDATE users SET balance=$1, trades=$2, wins=$3, realized=$4, books=$5, history=$6 WHERE name_key=$7', [round(f.balance), f.trades | 0, f.wins | 0, round(f.realized), toJson(f.books, '{}'), toJson(f.history, '[]'), key])
     },
     async topTraders(limit) {
       const { rows } = await pool.query('SELECT name, balance, trades, wins, realized FROM users ORDER BY balance DESC LIMIT $1', [limit])
       return rows
     },
+    async activeUsers() {
+      const { rows } = await pool.query("SELECT * FROM users WHERE books <> '{}'")
+      return rows
+    },
+    async saveMarket(symbol, state) {
+      await pool.query('INSERT INTO markets (symbol,state,updated_at) VALUES ($1,$2,$3) ON CONFLICT (symbol) DO UPDATE SET state=EXCLUDED.state, updated_at=EXCLUDED.updated_at', [symbol, state, Date.now()])
+    },
+    async loadMarkets() {
+      const { rows } = await pool.query('SELECT symbol, state FROM markets')
+      return rows
+    },
+    async close() { await pool.end() },
   }
 }
 
@@ -119,5 +159,9 @@ export const storage = {
   createUser: (u) => backend.createUser(u),
   saveAccount: (key, f) => backend.saveAccount(key, f),
   topTraders: (n) => backend.topTraders(n),
+  activeUsers: () => backend.activeUsers(),
+  saveMarket: (symbol, state) => backend.saveMarket(symbol, state),
+  loadMarkets: () => backend.loadMarkets(),
+  close: () => (backend.close ? backend.close() : undefined),
   get kind() { return backend?.kind },
 }

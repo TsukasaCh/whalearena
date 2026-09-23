@@ -139,6 +139,81 @@ export class Market {
     this.epoch = (this.epoch || 0) + 1
   }
 
+  // ── persistence: price + candle history survive a server restart ──────────
+  // Candles are packed as [time, open, high, low, close, volume] to keep it small.
+  serialize() {
+    const pack = (c) => [c.time, c.open, c.high, c.low, c.close, c.volume]
+    return {
+      v: 1,
+      price: this.price,
+      anchor: this.anchor,
+      harvested: this.harvested,
+      liquidatedTotal: this.liquidatedTotal,
+      baseCurrent: this.baseCurrent,
+      base: this.base.map(pack),
+      deep: this.deep.map(pack),
+    }
+  }
+
+  restore(st) {
+    if (!st || st.v !== 1 || !(st.price > 0) || !st.baseCurrent || !Array.isArray(st.base) || !st.base.length) return false
+    const unpack = (a) => ({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] })
+    this.price = st.price
+    this.anchor = st.anchor > 0 ? st.anchor : st.price
+    this.harvested = st.harvested || 0
+    this.liquidatedTotal = st.liquidatedTotal || 0
+    this.base = st.base.map(unpack)
+    this.deep = Array.isArray(st.deep) ? st.deep.map(unpack) : this.deep
+    this.baseCurrent = st.baseCurrent
+    // the server was down: close the open bar and bridge the gap up to now with
+    // candles that wander but END on the saved price, so open positions resume at
+    // exactly the price they left off at (no PnL jump, no retro SL/liq hits)
+    const now = nowBucket()
+    if (now > this.baseCurrent.time) {
+      this.base.push(this.baseCurrent)
+      const gap = Math.min((now - this.baseCurrent.time) / BASE_PERIOD - 1, BASE_CAP)
+      if (gap > 0) this.base.push(...this.bridge(gap, now - gap * BASE_PERIOD, this.price))
+      if (this.base.length > BASE_CAP) this.base = this.base.slice(-BASE_CAP)
+      this.baseCurrent = { time: now, open: this.price, high: this.price, low: this.price, close: this.price, volume: 0 }
+    }
+    // bots + resting ladder are ephemeral — rebuild them around the restored price
+    this.bots = []
+    for (let i = 0; i < INITIAL_BOTS; i++) this.bots.push(this.makeBot(this.price, 0.5))
+    this.initBook()
+    this.epoch = (this.epoch || 0) + 1
+    return true
+  }
+
+  // `count` 1m bars from `t0` that start and finish at `price` (random walk with
+  // its drift removed — a Brownian bridge), shaped like genBaseHistory's bars.
+  bridge(count, t0, price) {
+    const hv = HIST_VOL * this.volScale
+    const walk = []
+    let c = 0
+    for (let i = 0; i < count; i++) {
+      const sub = []
+      for (let k = 0; k < 6; k++) { c += (Math.random() - 0.5) * hv; sub.push(c) }
+      walk.push(sub)
+    }
+    const drift = c / count
+    const out = []
+    let prev = price
+    for (let i = 0; i < count; i++) {
+      const pts = walk[i].map((x, k) => price * Math.exp(x - drift * (i + (k + 1) / 6)))
+      const open = prev
+      const close = pts[pts.length - 1]
+      const hi = Math.max(open, ...pts)
+      const lo = Math.min(open, ...pts)
+      out.push({
+        time: t0 + i * BASE_PERIOD,
+        open: this.r(open), high: this.r(hi), low: this.r(lo), close: this.r(close),
+        volume: Math.round((((hi - lo) / (open || 1)) * 3000 + 6 + Math.random() * 10) * (DEPTH_REF / open) * 100) / 100,
+      })
+      prev = close
+    }
+    return out
+  }
+
   book(userId) {
     let b = this.books.get(userId)
     if (!b) { b = { position: null, pendingOrders: [] }; this.books.set(userId, b) }

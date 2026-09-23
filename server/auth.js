@@ -47,10 +47,23 @@ export function verify(token) {
   return tokens.get(token) || null
 }
 
+const parse = (s, fallback) => { try { return s ? JSON.parse(s) : fallback } catch { return fallback } }
+const toAccount = (u) => ({
+  name: u.name,
+  balance: u.balance, trades: u.trades || 0, wins: u.wins || 0, realized: u.realized || 0,
+  books: parse(u.books, {}), history: parse(u.history, []),
+})
+
 export async function getAccount(name) {
   const u = await storage.findUser((name || '').toLowerCase())
-  if (!u) return { balance: INITIAL_BALANCE, trades: 0, wins: 0, realized: 0 }
-  return { balance: u.balance, trades: u.trades || 0, wins: u.wins || 0, realized: u.realized || 0 }
+  if (!u) return { balance: INITIAL_BALANCE, trades: 0, wins: 0, realized: 0, books: {}, history: [] }
+  return toAccount(u)
+}
+
+// every account that still has an open position / resting order — loaded at boot
+// so those keep being managed (fills, SL/TP, liquidation) with nobody online
+export async function activeAccounts() {
+  return (await storage.activeUsers()).map(toAccount)
 }
 
 export function saveAccount(name, fields) {

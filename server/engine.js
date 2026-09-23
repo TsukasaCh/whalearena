@@ -8,7 +8,7 @@ const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
 
 // The MarketHub owns the shared wallet (balance + lifetime stats + merged trade
 // history) and one Market per tradable symbol. Positions and resting limit
-// orders live per-symbol inside each Market's `books`, keyed by user id.
+// orders live per-symbol inside each Market's `books`, keyed by account id (lowercased username).
 export class MarketHub {
   constructor() {
     this.users = new Map() // id -> { id, name, balance, trades, wins, realized, history }
@@ -20,6 +20,7 @@ export class MarketHub {
   }
 
   market(symbol) { return this.markets.get(symbol) }
+  symbols() { return [...this.markets.keys()] }
   hasSymbol(symbol) { return this.markets.has(symbol) }
 
   // Market → wallet settlement callback (a position closed / was liquidated).
@@ -34,7 +35,12 @@ export class MarketHub {
     this.dirty.add(uid)
   }
 
+  // `id` is the account's stable key (lowercased username), NOT a connection id:
+  // positions and resting limit orders belong to the account and stay live in the
+  // markets after the browser closes — fills, SL/TP and liquidation keep running.
   addUser(id, name, account) {
+    const existing = this.users.get(id)
+    if (existing) return existing // already live (other tab / reconnect) — memory is authoritative
     const a = account || {}
     const u = {
       id, name,
@@ -42,24 +48,44 @@ export class MarketHub {
       trades: a.trades || 0,
       wins: a.wins || 0,
       realized: a.realized || 0,
-      history: [],
+      history: Array.isArray(a.history) ? a.history : [],
     }
     this.users.set(id, u)
+    // restore persisted positions / resting orders into their markets
+    for (const [sym, b] of Object.entries(a.books || {})) {
+      const m = this.markets.get(sym)
+      if (!m || !b) continue
+      const pendingOrders = Array.isArray(b.pendingOrders) ? b.pendingOrders : []
+      if (!b.position && !pendingOrders.length) continue
+      m.books.set(id, { position: b.position || null, pendingOrders })
+    }
     return u
   }
 
-  removeUser(id) {
-    // refund any resting limit reserve, then drop the user's books everywhere
+  // what gets written to the DB: wallet + every open book + recent history
+  persistState(id) {
     const u = this.users.get(id)
-    for (const m of this.markets.values()) {
+    if (!u) return null
+    return { balance: u.balance, trades: u.trades, wins: u.wins, realized: u.realized, books: this.userBooks(id), history: u.history }
+  }
+
+  userBooks(id) {
+    const books = {}
+    for (const [sym, m] of this.markets) {
       const book = m.books.get(id)
       if (!book) continue
-      if (u && book.pendingOrders) {
-        for (const o of book.pendingOrders) u.balance = round(u.balance + o.margin * Math.max(0, o.qty - o.filled) / (o.qty || 1))
+      if (book.position || (book.pendingOrders && book.pendingOrders.length)) {
+        books[sym] = { position: book.position || null, pendingOrders: book.pendingOrders || [] }
       }
-      m.books.delete(id)
     }
-    this.users.delete(id)
+    return books
+  }
+
+  // users holding anything live in any market (for periodic persistence)
+  activeUserIds() {
+    const ids = new Set()
+    for (const m of this.markets.values()) for (const uid of m.books.keys()) ids.add(uid)
+    return ids
   }
 
   getUser(id) { return this.users.get(id) }
@@ -88,14 +114,7 @@ export class MarketHub {
   userState(id) {
     const u = this.users.get(id)
     if (!u) return null
-    const books = {}
-    for (const [sym, m] of this.markets) {
-      const book = m.books.get(id)
-      if (!book) continue
-      if (book.position || (book.pendingOrders && book.pendingOrders.length)) {
-        books[sym] = { position: book.position || null, pendingOrders: book.pendingOrders || [] }
-      }
-    }
+    const books = this.userBooks(id)
     return {
       balance: u.balance,
       stats: { trades: u.trades, wins: u.wins, realized: u.realized },
@@ -236,6 +255,7 @@ export class MarketHub {
     if (o.side === 'short' && price <= m.price) return { ok: false, error: 'Limit sell harus di atas market' }
     o.price = price
     o.qty = m.rq(qtyFromMargin(o.margin, o.leverage, price))
+    this.dirty.add(id)
     return { ok: true, user: u, symbol }
   }
 
@@ -265,12 +285,16 @@ export class MarketHub {
         pos.trailLevel = null
       }
     }
+    this.dirty.add(id)
     return { ok: true, user: this.users.get(id), symbol }
   }
 
   mm(symbol, cmd, payload = {}) {
     const m = this.markets.get(symbol)
-    if (m) m.mm(cmd, payload)
+    if (!m) return
+    // a reset wipes every book in this market — make sure the DB forgets them too
+    if (cmd === 'reset') for (const uid of m.books.keys()) this.dirty.add(uid)
+    m.mm(cmd, payload)
   }
 
   // ── per-tick advance of every market ──────────────────────────────────────
