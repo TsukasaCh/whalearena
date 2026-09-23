@@ -161,11 +161,16 @@ wss.on('connection', async (ws, req) => {
       }
     } else if (role === 'host' && m.type === 'mm') {
       hub.mm(sym, m.cmd, m.payload || {})
-      if (m.cmd === 'reset') {
+      if (m.cmd === 'reset' || m.cmd === 'rebase') {
+        // the whole history changed: everyone watching this market reloads it
         flushDirty()
         saveMarket(sym)
-        send(ws, { type: 'snap', ...hub.snapshot(sym) })
-        for (const c of clients) if (c.user.role === 'trader') send(c.ws, meMsg(c.user.id))
+        const snap = { type: 'snap', ...hub.snapshot(sym) }
+        for (const c of clients) {
+          if (c.symbol === sym) send(c.ws, snap)
+          if (c.user.role === 'trader') send(c.ws, meMsg(c.user.id))
+        }
+        broadcast({ type: 'tickers', tickers: hub.tickers() })
       }
     }
   })

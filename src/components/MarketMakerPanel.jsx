@@ -5,8 +5,20 @@ import CrowdStats from './CrowdStats'
 
 export default function MarketMakerPanel() {
   const mm = useSim((s) => s.mm)
+  const symbol = useSim((s) => s.symbol)
   const [force, setForce] = useState(0)
   const [target, setTarget] = useState('')
+  const [rebaseTo, setRebaseTo] = useState('')
+
+  const rebase = () => {
+    const p = Number(rebaseTo)
+    if (!(p > 0)) return
+    if (!window.confirm(`Rebase ${symbol} ke $${p.toLocaleString('en-US')}?
+
+Seluruh history candle ${symbol} dibuat ulang di level harga ini (spike lama hilang). Posisi & limit order ikut diskalakan — margin dan PnL tidak berubah.`)) return
+    mm('rebase', { target: p })
+    setRebaseTo('')
+  }
 
   const releaseForce = () => {
     setForce(0)
@@ -117,6 +129,30 @@ export default function MarketMakerPanel() {
               className="rounded bg-accent/20 px-3 py-1.5 text-xs font-bold text-accent hover:bg-accent/30"
             >
               Drive
+            </button>
+          </div>
+        </div>
+
+        {/* Rebase: re-level the whole chart to a price without a spike candle */}
+        <div className="rounded-lg border border-border bg-panel p-3">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-sub">📐 Rebase Chart</div>
+          <div className="mb-2 text-[10px] leading-snug text-sub">
+            Buat ulang seluruh history {symbol} di level harga baru, misalnya untuk menyamakan dengan harga asli. Tidak meninggalkan candle spike seperti Drive.
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex flex-1 items-center rounded border border-border bg-panel2 px-2">
+              <span className="text-sub">$</span>
+              <input
+                type="number"
+                value={rebaseTo}
+                placeholder="rebase to price…"
+                onChange={(e) => setRebaseTo(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && rebase()}
+                className="w-full bg-transparent px-2 py-1.5 font-mono text-xs text-txt outline-none placeholder:text-sub/40"
+              />
+            </div>
+            <button onClick={rebase} className="rounded bg-gold/20 px-3 py-1.5 text-xs font-bold text-gold hover:bg-gold/30">
+              Rebase
             </button>
           </div>
         </div>

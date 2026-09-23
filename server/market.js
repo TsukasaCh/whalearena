@@ -148,6 +148,7 @@ export class Market {
       v: 1,
       price: this.price,
       anchor: this.anchor,
+      seedPrice: this.seedPrice,
       harvested: this.harvested,
       liquidatedTotal: this.liquidatedTotal,
       baseCurrent: this.baseCurrent,
@@ -161,6 +162,7 @@ export class Market {
     const unpack = (a) => ({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] })
     this.price = st.price
     this.anchor = st.anchor > 0 ? st.anchor : st.price
+    if (st.seedPrice > 0) this.seedPrice = st.seedPrice
     this.harvested = st.harvested || 0
     this.liquidatedTotal = st.liquidatedTotal || 0
     this.base = st.base.map(unpack)
@@ -178,6 +180,50 @@ export class Market {
       this.baseCurrent = { time: now, open: this.price, high: this.price, low: this.price, close: this.price, volume: 0 }
     }
     // bots + resting ladder are ephemeral — rebuild them around the restored price
+    this.bots = []
+    for (let i = 0; i < INITIAL_BOTS; i++) this.bots.push(this.makeBot(this.price, 0.5))
+    this.initBook()
+    this.epoch = (this.epoch || 0) + 1
+    return true
+  }
+
+  // Re-level the whole market to `target`: fresh candle history (1m + deep) that
+  // has always lived around that price and ends exactly on it — no giant spike
+  // candle like a Drive leaves behind — with the mean-reversion anchor and seed
+  // moved there too so price doesn't drift back. Open positions and resting
+  // orders are rescaled by target/old (price ×f, qty ÷f) so every margin,
+  // notional and dollar PnL stays exactly what it was.
+  rebase(target) {
+    target = +target
+    if (!(target > 0) || !(this.price > 0)) return false
+    const f = target / this.price
+    const seed = this.genBaseHistory(BASE_CAP, target)
+    const k = target / seed.price
+    this.base = seed.base.map((c) => ({ ...c, open: this.r(c.open * k), high: this.r(c.high * k), low: this.r(c.low * k), close: this.r(c.close * k) }))
+    this.deep = this.genDeepHistory(HIST_HOURS, this.base[0].open, this.base[0].time)
+    this.price = this.r(target)
+    this.baseCurrent = { time: seed.nextTime, open: this.price, high: this.price, low: this.price, close: this.price, volume: 0 }
+    this.seedPrice = this.price
+    this.anchor = this.price
+    this.momentum = 0
+    this.queue = []
+    this.chopTicks = 0
+    this.drift = 0
+    this.spike = false
+    this.pendingFlow = 0
+    const px = (v) => (v ? this.r(v * f) : v)
+    for (const book of this.books.values()) {
+      const pos = book.position
+      if (pos) {
+        pos.entry = px(pos.entry); pos.liq = px(pos.liq); pos.sl = px(pos.sl); pos.tp = px(pos.tp)
+        pos.qty = this.rq(pos.qty / f)
+        if (pos.trail) { pos.trail.anchor = px(pos.trail.anchor); pos.trailLevel = px(pos.trailLevel) }
+      }
+      for (const o of book.pendingOrders) {
+        o.price = px(o.price); o.sl = px(o.sl); o.tp = px(o.tp)
+        o.qty = this.rq(o.qty / f); o.filled = this.rq(o.filled / f)
+      }
+    }
     this.bots = []
     for (let i = 0; i < INITIAL_BOTS; i++) this.bots.push(this.makeBot(this.price, 0.5))
     this.initBook()
@@ -531,6 +577,8 @@ export class Market {
         this.autoHunt = !this.autoHunt; this.autoCd = 12; break
       case 'reset':
         this.reset(false); break
+      case 'rebase':
+        this.rebase(payload.target); break
     }
   }
 

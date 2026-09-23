@@ -299,8 +299,8 @@ export class MarketHub {
   mm(symbol, cmd, payload = {}) {
     const m = this.markets.get(symbol)
     if (!m) return
-    // a reset wipes every book in this market — make sure the DB forgets them too
-    if (cmd === 'reset') for (const uid of m.books.keys()) this.dirty.add(uid)
+    // reset wipes / rebase rescales every book in this market — persist that
+    if (cmd === 'reset' || cmd === 'rebase') for (const uid of m.books.keys()) this.dirty.add(uid)
     m.mm(cmd, payload)
   }
 
