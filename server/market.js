@@ -302,19 +302,43 @@ export class Market {
     const imb = L + S > 0 ? (L - S) / (L + S) : 0
     return Math.round(clamp(FUNDING_BASE + FUNDING_K * imb, -FUNDING_CAP, FUNDING_CAP) * 1e7) / 1e7
   }
-  // settle funding on every real position: pay = notional x rate (longs pay when
-  // rate > 0). It moves the isolated margin, and with it the liquidation price.
+  // Settle funding ZERO-SUM between real users, like a real exchange: rate > 0 →
+  // longs pay shorts, rate < 0 → shorts pay longs. Only notional that has a real
+  // counterparty is charged: pot = |rate| x min(payer notional, receiver notional),
+  // collected from payers and paid to receivers pro-rata by notional. No one on
+  // the other side → nobody pays. It moves the isolated margin (and liq price).
   applyFunding(userEvents) {
     const rate = this.fundingRate()
+    const payerSide = rate >= 0 ? 'long' : 'short'
+    const payers = [], receivers = []
+    let payN = 0, recN = 0
     for (const [uid, book] of this.books) {
       const pos = book.position
       if (!pos) continue
-      const pay = pos.qty * this.price * rate * (pos.side === 'long' ? 1 : -1)
-      pos.margin = round2(pos.margin - pay)
-      pos.funding = round2((pos.funding || 0) - pay)
-      pos.liq = this.r(liqFromMargin(pos.side, pos.entry, pos.margin, pos.qty))
-      userEvents.push({ userId: uid, symbol: this.symbol, event: { type: 'funding', symbol: this.symbol, side: pos.side, amount: round2(-pay), rate, id: Date.now() + Math.random() } })
+      const n = pos.qty * this.price
+      if (pos.side === payerSide) { payers.push({ uid, pos, n }); payN += n } else { receivers.push({ uid, pos, n }); recN += n }
     }
+    const pot = Math.abs(rate) * Math.min(payN, recN)
+    if (pot > 0) {
+      const settle = (list, total, sign) => {
+        for (const { uid, pos, n } of list) {
+          const amt = sign * pot * (n / total) // + received, - paid
+          pos.margin = round2(pos.margin + amt)
+          pos.funding = round2((pos.funding || 0) + amt)
+          pos.liq = this.r(liqFromMargin(pos.side, pos.entry, pos.margin, pos.qty))
+          userEvents.push({ userId: uid, symbol: this.symbol, event: { type: 'funding', symbol: this.symbol, side: pos.side, amount: round2(amt), rate, id: Date.now() + Math.random() } })
+        }
+      }
+      settle(payers, payN, -1)
+      settle(receivers, recN, 1)
+    }
+    // the settlement minute gets a sharp one-candle move in the funding direction
+    // (negative → dump, positive → pump), bigger the further the rate is from 0:
+    // 0.2% of price at ~0 up to 1% at the cap, scaled by the market's volatility
+    const pct = (0.002 + 0.008 * Math.min(1, Math.abs(rate) / FUNDING_CAP)) * this.volScale
+    this.pendingFlow += (rate >= 0 ? 1 : -1) * pct * this.price * this.depth()
+    this.chopTicks = 0
+    this.drift = 0
   }
 
   book(userId) {

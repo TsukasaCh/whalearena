@@ -25,8 +25,10 @@ export const TAKER_FEE = 0.0005 // 0.05%
 export const MAKER_FEE = 0.0002 // 0.02%
 
 // Funding settles every hour on the hour (UTC). Rate follows the long/short OI
-// imbalance: positive → longs pay shorts, negative → shorts pay longs. It is
-// taken from / added to the position's isolated margin, so liq price moves.
+// imbalance: positive → longs pay shorts, negative → shorts pay longs. Zero-sum
+// between real users (see Market.applyFunding); it is taken from / added to the
+// position's isolated margin, so liq price moves. The settlement minute also
+// gets a sharp candle in the funding direction.
 export const FUNDING_INTERVAL = 3600 // seconds
 export const FUNDING_BASE = 0.0000125 // 0.01% per 8h, spread hourly
 export const FUNDING_K = 0.0004 // rate per unit of (long-short)/(long+short) imbalance
