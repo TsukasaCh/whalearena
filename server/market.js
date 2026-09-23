@@ -1,7 +1,7 @@
 import {
   BASE_PERIOD, BASE_VOL, HIST_VOL, BASE_CAP, HIST_HOURS,
   MMR, BOT_TARGET, BOT_MAX, INITIAL_BOTS, DEPTH_REF,
-  TAKER_FEE, MAKER_FEE, FUNDING_INTERVAL, FUNDING_BASE, FUNDING_K, FUNDING_CAP,
+  TAKER_FEE, MAKER_FEE, FUNDING_INTERVAL, FUNDING_BASE, FUNDING_K, FUNDING_CAP, FUNDING_FLOW,
 } from './constants.js'
 
 // Round to a market's own precision (BTC → cents, DOGE → 6dp, PEPE → 10dp).
@@ -332,13 +332,17 @@ export class Market {
       settle(payers, payN, -1)
       settle(receivers, recN, 1)
     }
-    // the settlement minute gets a sharp one-candle move in the funding direction
-    // (negative → dump, positive → pump), bigger the further the rate is from 0:
-    // 0.2% of price at ~0 up to 1% at the cap, scaled by the market's volatility
-    const pct = (0.002 + 0.008 * Math.min(1, Math.abs(rate) / FUNDING_CAP)) * this.volScale
-    this.pendingFlow += (rate >= 0 ? 1 : -1) * pct * this.price * this.depth()
-    this.chopTicks = 0
-    this.drift = 0
+    // The settlement minute moves price by the funding VOLUME, not a fixed %:
+    // part of the matched notional reacts (more of it the closer the rate is to
+    // the cap) and that flow walks the book, so the candle size follows how much
+    // money actually changed hands vs the market's depth. No funding paid → no
+    // move. Direction: negative → dump, positive → pump. Capped at 3% of price.
+    if (pot > 0) {
+      const matched = Math.min(payN, recN) / this.price // coins on both sides
+      const flow = matched * FUNDING_FLOW * Math.min(1, Math.abs(rate) / FUNDING_CAP)
+      const cap = 0.03 * this.price * this.depth()
+      this.pendingFlow += (rate >= 0 ? 1 : -1) * Math.min(flow, cap)
+    }
   }
 
   book(userId) {

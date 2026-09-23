@@ -28,11 +28,14 @@ export const MAKER_FEE = 0.0002 // 0.02%
 // imbalance: positive → longs pay shorts, negative → shorts pay longs. Zero-sum
 // between real users (see Market.applyFunding); it is taken from / added to the
 // position's isolated margin, so liq price moves. The settlement minute also
-// gets a sharp candle in the funding direction.
+// gets a candle in the funding direction sized by the funding volume.
 export const FUNDING_INTERVAL = 3600 // seconds
 export const FUNDING_BASE = 0.0000125 // 0.01% per 8h, spread hourly
 export const FUNDING_K = 0.0004 // rate per unit of (long-short)/(long+short) imbalance
 export const FUNDING_CAP = 0.0005 // ±0.05% per hour
+// share of the matched funding notional that turns into order flow at settlement
+// (at the rate cap); scales down linearly with |rate|
+export const FUNDING_FLOW = 0.5
 
 // Reference price the order-flow model is tuned around (BTC-scale). Depth and
 // the ambient/drift/nudge flows scale by (DEPTH_REF / price) so a $0.13 DOGE and
