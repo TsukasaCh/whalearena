@@ -1,5 +1,5 @@
-import { MARKETS, INITIAL_BALANCE } from './constants.js'
-import { Market, depthFor, qtyFromMargin, liquidationPrice, unrealizedPnl } from './market.js'
+import { MARKETS, INITIAL_BALANCE, TAKER_FEE, MAKER_FEE } from './constants.js'
+import { Market, depthFor, qtyFromMargin, liquidationPrice, unrealizedPnl, closeOut } from './market.js'
 
 export { depthFor }
 
@@ -133,7 +133,8 @@ export class MarketHub {
     leverage = clamp(Math.round(+leverage || 1), 1, 100)
     margin = +margin
     if (!margin || margin <= 0) return { ok: false, error: 'Invalid margin' }
-    if (margin > u.balance) return { ok: false, error: 'Insufficient balance' }
+    // taker fee is charged on notional, on top of the margin
+    if (margin + margin * leverage * TAKER_FEE > u.balance) return { ok: false, error: 'Saldo tidak cukup (margin + fee taker)' }
     if (!['long', 'short'].includes(side)) return { ok: false, error: 'Bad side' }
     // validate BEFORE walking: the walk fills other users' limit orders
     const cur = m.books.get(id)
@@ -148,9 +149,12 @@ export class MarketHub {
     const addQty = qtyFromMargin(margin, leverage, entry)
     // only the part that hit bot liquidity pushes price; user makers absorbed the rest
     const flow = Math.max(0, addQty - userQty)
+    const fee = entry * addQty * TAKER_FEE
+    m.feesCollected += fee
     if (book.position) {
       m.dcaInto(book.position, addQty, entry, margin)
-      u.balance = round(u.balance - margin)
+      book.position.fees = (book.position.fees || 0) + fee
+      u.balance = round(u.balance - margin - fee)
       m.pendingFlow += side === 'long' ? flow : -flow
       this.dirty.add(id)
       return { ok: true, user: u, symbol, added: true }
@@ -165,8 +169,8 @@ export class MarketHub {
       if (cleanSl && cleanSl <= entry) cleanSl = null
       if (cleanTp && cleanTp >= entry) cleanTp = null
     }
-    book.position = { side, entry: m.r(entry), leverage, margin, qty: m.rq(addQty), sl: cleanSl, tp: cleanTp, liq, openedAt: Date.now() }
-    u.balance = round(u.balance - margin)
+    book.position = { side, entry: m.r(entry), leverage, margin, deposit: margin, fees: fee, funding: 0, qty: m.rq(addQty), sl: cleanSl, tp: cleanTp, liq, openedAt: Date.now() }
+    u.balance = round(u.balance - margin - fee)
     m.pendingFlow += side === 'long' ? flow : -flow
     this.dirty.add(id)
     return { ok: true, user: u, symbol }
@@ -181,18 +185,15 @@ export class MarketHub {
     const pos = book.position
     // closing is a market order in the OPPOSITE direction — it walks the book too
     const { price: exit, userQty } = m.walkBook(pos.side === 'long' ? 'short' : 'long', pos.qty, id)
-    const pnl = unrealizedPnl(pos.side, pos.entry, exit, pos.qty)
-    u.balance = round(u.balance + pos.margin + pnl)
     const flow = Math.max(0, pos.qty - userQty)
     m.pendingFlow += pos.side === 'long' ? -flow : flow
-    u.trades += 1
-    if (pnl > 0) u.wins += 1
-    u.realized = round(u.realized + pnl)
-    u.history = [{ symbol, side: pos.side, leverage: pos.leverage, entry: pos.entry, exit: m.r(exit), qty: pos.qty, margin: pos.margin, pnl: round(pnl), reason: 'manual', closedAt: Date.now() }, ...u.history].slice(0, 40)
+    // net PnL = price PnL - open/close fees + funding received
+    const { credit, net, closeFee, record } = closeOut(pos, exit, 'manual', symbol, (n) => m.r(n))
+    m.feesCollected += closeFee
     book.position = null
     m.dropIfEmpty(id)
-    this.dirty.add(id)
-    return { ok: true, user: u, symbol, event: { type: 'closed', symbol, pnl: round(pnl), price: m.r(exit), id: Date.now() } }
+    this.settle(id, { credit, pnl: net, record })
+    return { ok: true, user: u, symbol, event: { type: 'closed', symbol, pnl: record.pnl, fee: record.fee, price: m.r(exit), id: Date.now() } }
   }
 
   placeLimit(id, symbol, { side, leverage, margin, price, sl, tp }) {
@@ -206,7 +207,7 @@ export class MarketHub {
     margin = +margin
     price = +price
     if (!margin || margin <= 0) return { ok: false, error: 'Invalid margin' }
-    if (margin > u.balance) return { ok: false, error: 'Insufficient balance' }
+    if (margin + margin * leverage * MAKER_FEE > u.balance) return { ok: false, error: 'Saldo tidak cukup (margin + fee maker)' }
     if (!['long', 'short'].includes(side)) return { ok: false, error: 'Bad side' }
     if (!price || price <= 0) return { ok: false, error: 'Invalid price' }
     if (side === 'long' && price >= m.price) return { ok: false, error: 'Limit buy must be BELOW market' }
@@ -220,9 +221,11 @@ export class MarketHub {
       if (cleanSl && cleanSl <= price) cleanSl = null
       if (cleanTp && cleanTp >= price) cleanTp = null
     }
-    u.balance = round(u.balance - margin)
+    // the maker fee is reserved with the margin and consumed as the order fills
+    const fee = round(margin * leverage * MAKER_FEE)
+    u.balance = round(u.balance - margin - fee)
     const oid = 'o' + Math.random().toString(36).slice(2, 9)
-    book.pendingOrders.push({ id: oid, side, leverage, margin, price: m.r(price), sl: cleanSl, tp: cleanTp, qty: m.rq(qtyFromMargin(margin, leverage, price)), filled: 0 })
+    book.pendingOrders.push({ id: oid, side, leverage, margin, fee, price: m.r(price), sl: cleanSl, tp: cleanTp, qty: m.rq(qtyFromMargin(margin, leverage, price)), filled: 0 })
     this.dirty.add(id)
     return { ok: true, user: u, symbol }
   }
@@ -237,7 +240,7 @@ export class MarketHub {
     let refunded = 0
     for (const o of book.pendingOrders) {
       if (orderId && o.id !== orderId) { keep.push(o); continue }
-      refunded += o.margin * Math.max(0, o.qty - o.filled) / (o.qty || 1)
+      refunded += (o.margin + (o.fee || 0)) * Math.max(0, o.qty - o.filled) / (o.qty || 1)
     }
     if (keep.length === book.pendingOrders.length) return { ok: false }
     u.balance = round(u.balance + refunded)

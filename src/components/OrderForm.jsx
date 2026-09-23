@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSim } from '../store/useSimStore'
-import { liquidationPrice, qtyFromMargin, notional } from '../lib/trading'
+import { liquidationPrice, qtyFromMargin, notional, TAKER_FEE, MAKER_FEE } from '../lib/trading'
 import { usd, fmt, fmtPrice, fmtQty } from '../lib/format'
 
 export default function OrderForm() {
@@ -27,6 +27,7 @@ export default function OrderForm() {
   const [error, setError] = useState('')
 
   const isLimit = orderType === 'limit'
+  const feeRate = isLimit ? MAKER_FEE : TAKER_FEE
   const entry = isLimit && Number(limitPrice) > 0 ? Number(limitPrice) : price
 
   // the book is one-directional: position + all resting orders share a side
@@ -52,7 +53,7 @@ export default function OrderForm() {
     setError('')
     const m = Number(margin)
     if (!m || m <= 0) return setError('Masukkan margin yang valid.')
-    if (m > balance) return setError('Saldo tidak cukup.')
+    if (m + m * leverage * feeRate > balance) return setError('Saldo tidak cukup (margin + fee).')
     if (isLimit) {
       const lp = Number(limitPrice)
       if (!lp || lp <= 0) return setError('Masukkan harga limit.')
@@ -64,7 +65,8 @@ export default function OrderForm() {
     }
   }
 
-  const quickPct = (p) => setMargin(Math.floor(balance * p))
+  // leave room for the fee (charged on notional = margin × leverage)
+  const quickPct = (p) => setMargin(Math.floor((balance * p) / (1 + leverage * feeRate)))
   const disabled = oppSide
 
   return (
@@ -220,6 +222,11 @@ export default function OrderForm() {
         )}
         <Row label={preview.dca ? 'Total Size' : 'Position Size'} value={usd(preview.notional)} />
         <Row label={preview.dca ? 'Total Quantity' : 'Quantity'} value={`${fmtQty(preview.qty)} ${baseAsset}`} />
+        <Row
+          label={`Fee ${isLimit ? 'maker' : 'taker'} (${fmt(feeRate * 100, 2)}%)`}
+          value={usd((Number(margin) || 0) * leverage * feeRate)}
+          valueClass="text-sub"
+        />
         <Row
           label={preview.dca ? '→ New Liq. Price' : 'Est. Liq. Price'}
           value={fmtPrice(preview.liq, dp)}

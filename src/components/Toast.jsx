@@ -16,7 +16,7 @@ export default function Toast() {
     lastId.current = toast.id
     if (toast.type === 'liq') playLiquidation()
     else if (toast.type === 'tp' || toast.type === 'limitFill') playProfit()
-    else if (toast.type !== 'error') playClose()
+    else if (toast.type !== 'error' && toast.type !== 'funding') playClose()
     const t = setTimeout(dismiss, toast.type === 'liq' ? 3800 : 2600)
     return () => clearTimeout(t)
   }, [toast, dismiss])
@@ -51,6 +51,24 @@ export default function Toast() {
           >
             Dismiss
           </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (toast.type === 'funding') {
+    const got = toast.amount >= 0
+    return (
+      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-panel px-4 py-2.5 shadow-lg">
+          <span className="text-lg">⏱️</span>
+          <div>
+            <div className="text-xs font-semibold text-txt">Funding {got ? 'Received' : 'Paid'}</div>
+            <div className="text-[10px] text-sub">
+              {sym}{toast.side?.toUpperCase()} · rate {(toast.rate * 100).toFixed(4)}%
+            </div>
+          </div>
+          <div className={`font-mono text-sm font-bold ${got ? 'text-up' : 'text-down'}`}>{signedUsd(toast.amount)}</div>
         </div>
       </div>
     )

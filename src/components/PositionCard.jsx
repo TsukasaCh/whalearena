@@ -134,6 +134,12 @@ export default function PositionCard() {
         <Stat label="Mark Price" value={fmtPrice(price, dp)} />
         <Stat label="Margin" value={usd(position.margin)} />
         <Stat label="Size" value={`${fmtQty(position.qty)} ${baseAsset}`} />
+        <Stat label="Fees Paid" value={usd(-(position.fees || 0))} valueClass="text-sub" />
+        <Stat
+          label="Funding"
+          value={signedUsd(position.funding || 0)}
+          valueClass={(position.funding || 0) >= 0 ? 'text-up' : 'text-down'}
+        />
         <Stat
           label="Take Profit"
           value={position.tp ? fmtPrice(position.tp, dp) : '—'}

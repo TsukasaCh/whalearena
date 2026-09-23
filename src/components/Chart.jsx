@@ -9,10 +9,47 @@ const DOWN = '#FF5252'
 const UPV = 'rgba(0,230,118,0.45)'
 const DOWNV = 'rgba(255,82,82,0.45)'
 const round2 = (n) => Math.round(n * 100) / 100
+// simple moving averages over candle closes (Binance's default trio + colors)
+const MAS = [
+  { n: 7, color: '#F0B90B' },
+  { n: 25, color: '#EB40B5' },
+  { n: 99, color: '#B385F8' },
+]
+const smaSeries = (candles, n) => {
+  const out = []
+  let sum = 0
+  for (let i = 0; i < candles.length; i++) {
+    sum += candles[i].close
+    if (i >= n) sum -= candles[i - n].close
+    if (i >= n - 1) out.push({ time: candles[i].time, value: sum / n })
+  }
+  return out
+}
+
+// next hourly funding: predicted rate (longs pay when positive) + countdown
+function FundingBadge() {
+  const funding = useSim((s) => s.crowd.funding)
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  if (!funding) return null
+  const left = Math.max(0, funding.next - Math.floor(now / 1000))
+  const mm = String(Math.floor(left / 60)).padStart(2, '0')
+  const ss = String(left % 60).padStart(2, '0')
+  const pos = funding.rate >= 0
+  return (
+    <span className="rounded bg-panel2/90 px-2 py-1 font-mono text-sub" title={pos ? 'Positif: long bayar ke short' : 'Negatif: short bayar ke long'}>
+      Funding <span className={pos ? 'text-up' : 'text-down'}>{pos ? '+' : ''}{(funding.rate * 100).toFixed(4)}%</span> · {mm}:{ss}
+    </span>
+  )
+}
 
 export default function Chart() {
   const wrapRef = useRef(null)
   const legendRef = useRef(null)
+  const maLegendRef = useRef(null)
   const seriesRef = useRef(null)
   const volRef = useRef(null)
   const linesRef = useRef([])
@@ -81,6 +118,12 @@ export default function Chart() {
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
     volRef.current = vol
 
+    // MA lines drawn over the candles (no own price label / crosshair dot)
+    const maLines = MAS.map((ma) =>
+      chart.addLineSeries({ color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+    )
+    let closes = [] // { time, close } of every displayed candle, for live MA updates
+
     const view = () => {
       const s = useSim.getState()
       return buildSeries(s.deep, s.base, s.baseCurrent, TF[s.timeframe], BASE_PERIOD)
@@ -99,10 +142,16 @@ export default function Chart() {
       const s = useSim.getState()
       // adapt price precision to the active market (BTC→2, DOGE→6, PEPE→10)
       const dp = s.dp || 2
-      series.applyOptions({ priceFormat: { type: 'price', precision: dp, minMove: Math.pow(10, -dp) } })
+      const priceFormat = { type: 'price', precision: dp, minMove: Math.pow(10, -dp) }
+      series.applyOptions({ priceFormat })
       const candles = view()
       lastCount = candles.length
       series.setData(candles)
+      closes = candles.map((c) => ({ time: c.time, close: c.close }))
+      MAS.forEach((ma, i) => {
+        maLines[i].applyOptions({ priceFormat })
+        maLines[i].setData(smaSeries(candles, ma.n))
+      })
       vol.setData(candles.map((c) => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? UPV : DOWNV })))
       setRecentRange()
     }
@@ -125,9 +174,25 @@ export default function Chart() {
         `<span style="color:${col}">${chg >= 0 ? '+' : ''}${fmt(chg)}%</span>&nbsp;&nbsp;` +
         `${k('Vol')} <span style="color:${col}">${fmt(v || 0, 2)}</span> ${k(s.baseAsset || '')}`
     }
+    // MA(7) 64,512.30  MA(25) …  — values at the hovered bar, or the latest one
+    const renderMA = (values) => {
+      const node = maLegendRef.current
+      if (node == null) return
+      const dp = useSim.getState().dp || 2
+      node.innerHTML = MAS.map((ma, i) =>
+        `<span style="color:${ma.color}">MA(${ma.n}) ${values[i] != null ? fmtPrice(values[i], dp) : '—'}</span>`
+      ).join('&nbsp;&nbsp;')
+    }
+    const latestMA = () => MAS.map((ma) => {
+      if (closes.length < ma.n) return null
+      let sum = 0
+      for (let i = closes.length - ma.n; i < closes.length; i++) sum += closes[i].close
+      return sum / ma.n
+    })
     const showLatest = () => {
       const d = useSim.getState().disp
       if (d) renderLegend(d.open, d.high, d.low, d.close, d.volume)
+      renderMA(latestMA())
     }
     showLatest()
 
@@ -137,6 +202,7 @@ export default function Chart() {
         hovering = true
         const vd = param.seriesData.get(vol)
         renderLegend(bar.open, bar.high, bar.low, bar.close, vd ? vd.value : 0)
+        renderMA(maLines.map((l) => param.seriesData.get(l)?.value))
       } else {
         hovering = false
         showLatest()
@@ -216,6 +282,13 @@ export default function Chart() {
         try {
           series.update(disp)
           vol.update({ time: disp.time, value: disp.volume || 0, color: disp.close >= disp.open ? UPV : DOWNV })
+          // roll the live candle into the MA inputs (same bar → replace, new bar → append)
+          const last = closes[closes.length - 1]
+          if (last && last.time === disp.time) last.close = disp.close
+          else closes.push({ time: disp.time, close: disp.close })
+          const vals = latestMA()
+          vals.forEach((v, i) => { if (v != null) maLines[i].update({ time: disp.time, value: v }) })
+          if (!hovering) renderMA(vals)
         } catch (e) {
           /* rebuilt by epoch listener */
         }
@@ -367,10 +440,15 @@ export default function Chart() {
       <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2 text-xs">
         <span className="rounded bg-panel2/90 px-2 py-1 font-semibold text-txt">{symbol}/USDT</span>
         <span className="rounded bg-panel2/90 px-2 py-1 text-sub">Perp · Simulated</span>
+        <FundingBadge />
       </div>
       <div
         ref={legendRef}
         className="pointer-events-none absolute left-3 top-11 z-10 rounded bg-bg/70 px-2 py-1 font-mono text-[11px] leading-none backdrop-blur-sm"
+      />
+      <div
+        ref={maLegendRef}
+        className="pointer-events-none absolute left-3 top-[4.1rem] z-10 rounded bg-bg/70 px-2 py-1 font-mono text-[11px] leading-none backdrop-blur-sm"
       />
 
       {/* quick action at the hovered price (OKX-style): set SL/TP or place a limit */}

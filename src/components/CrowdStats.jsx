@@ -47,7 +47,7 @@ export default function CrowdStats() {
       </div>
 
       {/* Rekt + harvested */}
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-3 grid grid-cols-3 gap-2">
         <div className={`rounded-md p-2 text-center transition-colors ${flash ? 'bg-down/25' : 'bg-panel2/60'}`}>
           <div className="text-[10px] uppercase tracking-wide text-sub">☠ Rekt</div>
           <div className={`font-mono text-lg font-bold ${flash ? 'text-down' : 'text-txt'}`}>
@@ -57,6 +57,10 @@ export default function CrowdStats() {
         <div className="rounded-md bg-panel2/60 p-2 text-center">
           <div className="text-[10px] uppercase tracking-wide text-sub">💰 Harvested</div>
           <div className="font-mono text-lg font-bold text-gold">{usd(crowd.harvested, 0)}</div>
+        </div>
+        <div className="rounded-md bg-panel2/60 p-2 text-center">
+          <div className="text-[10px] uppercase tracking-wide text-sub">🧾 Fees</div>
+          <div className="font-mono text-lg font-bold text-gold">${compact(crowd.fees || 0)}</div>
         </div>
       </div>
 

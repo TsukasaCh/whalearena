@@ -1,6 +1,7 @@
 import {
   BASE_PERIOD, BASE_VOL, HIST_VOL, BASE_CAP, HIST_HOURS,
   MMR, BOT_TARGET, BOT_MAX, INITIAL_BOTS, DEPTH_REF,
+  TAKER_FEE, MAKER_FEE, FUNDING_INTERVAL, FUNDING_BASE, FUNDING_K, FUNDING_CAP,
 } from './constants.js'
 
 // Round to a market's own precision (BTC → cents, DOGE → 6dp, PEPE → 10dp).
@@ -35,6 +36,33 @@ const liquidationPrice = (side, entry, lev) =>
   side === 'long' ? entry * (1 - 1 / lev + MMR) : entry * (1 + 1 / lev - MMR)
 const qtyFromMargin = (margin, lev, entry) => (entry ? (margin * lev) / entry : 0)
 const unrealizedPnl = (side, entry, price, qty) => (side === 'long' ? price - entry : entry - price) * qty
+// isolated liq price from the ACTUAL margin (funding moves margin away from the
+// nominal entry/leverage formula): equity = margin + pnl hits MMR x notional
+const liqFromMargin = (side, entry, margin, qty) => {
+  if (!qty) return entry
+  const buffer = (margin - MMR * entry * qty) / qty
+  return side === 'long' ? entry - buffer : entry + buffer
+}
+const round2 = (n) => Math.round(n * 100) / 100
+
+// Final wallet settlement of a closed position. `deposit` is the margin the user
+// put in, `fees` the fees already paid on the way in, `funding` the net funding
+// received (already folded into `margin`). net = what the wallet actually gained.
+function closeOut(pos, exit, reason, symbol, rPrice) {
+  const liq = reason === 'liq'
+  const gross = liq ? -pos.margin : unrealizedPnl(pos.side, pos.entry, exit, pos.qty)
+  const closeFee = liq ? 0 : exit * pos.qty * TAKER_FEE
+  const credit = liq ? 0 : Math.max(0, pos.margin + gross - closeFee)
+  const deposit = pos.deposit ?? pos.margin
+  const fees = (pos.fees || 0) + closeFee
+  const net = credit - deposit - (pos.fees || 0)
+  const record = {
+    symbol, side: pos.side, leverage: pos.leverage, entry: pos.entry, exit: rPrice(exit), qty: pos.qty,
+    margin: deposit, pnl: round2(net), gross: round2(liq ? -deposit : gross), fee: round2(fees),
+    funding: round2(pos.funding || 0), reason, closedAt: Date.now(),
+  }
+  return { credit, net, closeFee, record }
+}
 
 function firstHit(oldP, newP, pos) {
   const lo = Math.min(oldP, newP)
@@ -104,6 +132,8 @@ export class Market {
     this.settle = settle
     this.books = new Map() // userId -> { position, pendingOrders: [] }
     this.makerEvents = [] // limit fills from market orders, flushed with the next tick
+    this.feesCollected = 0 // trading fees paid by real users in this market (the house cut)
+    this.nextFunding = Math.ceil(Date.now() / 1000 / FUNDING_INTERVAL) * FUNDING_INTERVAL
     this.reset(true)
   }
 
@@ -111,15 +141,21 @@ export class Market {
   r(n) { const f = Math.pow(10, this.dp); return Math.round(n * f) / f }
   rq(n) { return Math.round(n * 1e6) / 1e6 } // coin quantity precision
 
+  // fresh 1m + deep history that ENDS exactly on `target` (the live price)
+  freshHistory(target) {
+    const seed = this.genBaseHistory(BASE_CAP, target)
+    const k = target / seed.price
+    this.base = seed.base.map((c) => ({ ...c, open: this.r(c.open * k), high: this.r(c.high * k), low: this.r(c.low * k), close: this.r(c.close * k) }))
+    this.deep = this.genDeepHistory(HIST_HOURS, this.base[0].open, this.base[0].time)
+    this.price = this.r(target)
+    this.baseCurrent = { time: seed.nextTime, open: this.price, high: this.price, low: this.price, close: this.price, volume: 0 }
+  }
+
   reset(initial = false) {
-    const seed = this.genBaseHistory(BASE_CAP, this.seedPrice)
-    this.price = seed.price
-    this.base = seed.base
-    this.deep = this.genDeepHistory(HIST_HOURS, seed.base[0].open, seed.base[0].time)
-    this.baseCurrent = { time: seed.nextTime, open: seed.price, high: seed.price, low: seed.price, close: seed.price, volume: 0 }
+    this.freshHistory(this.seedPrice)
     this.momentum = 0
     this.bots = []
-    for (let i = 0; i < INITIAL_BOTS; i++) this.bots.push(this.makeBot(seed.price, 0.5))
+    for (let i = 0; i < INITIAL_BOTS; i++) this.bots.push(this.makeBot(this.price, 0.5))
     this.harvested = 0
     this.liquidatedTotal = 0
     this.queue = []
@@ -151,6 +187,7 @@ export class Market {
       seedPrice: this.seedPrice,
       harvested: this.harvested,
       liquidatedTotal: this.liquidatedTotal,
+      feesCollected: this.feesCollected,
       baseCurrent: this.baseCurrent,
       base: this.base.map(pack),
       deep: this.deep.map(pack),
@@ -165,6 +202,7 @@ export class Market {
     if (st.seedPrice > 0) this.seedPrice = st.seedPrice
     this.harvested = st.harvested || 0
     this.liquidatedTotal = st.liquidatedTotal || 0
+    this.feesCollected = st.feesCollected || 0
     this.base = st.base.map(unpack)
     this.deep = Array.isArray(st.deep) ? st.deep.map(unpack) : this.deep
     this.baseCurrent = st.baseCurrent
@@ -197,12 +235,7 @@ export class Market {
     target = +target
     if (!(target > 0) || !(this.price > 0)) return false
     const f = target / this.price
-    const seed = this.genBaseHistory(BASE_CAP, target)
-    const k = target / seed.price
-    this.base = seed.base.map((c) => ({ ...c, open: this.r(c.open * k), high: this.r(c.high * k), low: this.r(c.low * k), close: this.r(c.close * k) }))
-    this.deep = this.genDeepHistory(HIST_HOURS, this.base[0].open, this.base[0].time)
-    this.price = this.r(target)
-    this.baseCurrent = { time: seed.nextTime, open: this.price, high: this.price, low: this.price, close: this.price, volume: 0 }
+    this.freshHistory(target)
     this.seedPrice = this.price
     this.anchor = this.price
     this.momentum = 0
@@ -259,6 +292,29 @@ export class Market {
       prev = close
     }
     return out
+  }
+
+  // -- funding --------------------------------------------------------------
+  // predicted rate for the next settlement, from the crowd's OI imbalance
+  fundingRate() {
+    let L = 0, S = 0
+    for (const e of this.mapEntries()) { if (e.side === 'long') L += e.notional; else S += e.notional }
+    const imb = L + S > 0 ? (L - S) / (L + S) : 0
+    return Math.round(clamp(FUNDING_BASE + FUNDING_K * imb, -FUNDING_CAP, FUNDING_CAP) * 1e7) / 1e7
+  }
+  // settle funding on every real position: pay = notional x rate (longs pay when
+  // rate > 0). It moves the isolated margin, and with it the liquidation price.
+  applyFunding(userEvents) {
+    const rate = this.fundingRate()
+    for (const [uid, book] of this.books) {
+      const pos = book.position
+      if (!pos) continue
+      const pay = pos.qty * this.price * rate * (pos.side === 'long' ? 1 : -1)
+      pos.margin = round2(pos.margin - pay)
+      pos.funding = round2((pos.funding || 0) - pay)
+      pos.liq = this.r(liqFromMargin(pos.side, pos.entry, pos.margin, pos.qty))
+      userEvents.push({ userId: uid, symbol: this.symbol, event: { type: 'funding', symbol: this.symbol, side: pos.side, amount: round2(-pay), rate, id: Date.now() + Math.random() } })
+    }
   }
 
   book(userId) {
@@ -506,6 +562,7 @@ export class Market {
   }
 
   dcaInto(pos, addQty, addEntry, addMargin) {
+    pos.deposit = round2((pos.deposit ?? pos.margin) + addMargin)
     const nq = pos.qty + addQty
     pos.entry = this.r((pos.entry * pos.qty + addEntry * addQty) / nq)
     pos.qty = this.rq(nq)
@@ -531,17 +588,21 @@ export class Market {
     if (df <= 1e-12) return 0
     const entry = o.price
     const marginShare = o.margin * (df / o.qty)
+    const feeShare = (o.fee || 0) * (df / o.qty) // maker fee, reserved when the order was placed
     if (!book.position) {
       book.position = {
         side: o.side, entry: this.r(entry), leverage: o.leverage,
-        margin: Math.round(marginShare * 100) / 100, qty: this.rq(df), sl: o.sl, tp: o.tp,
+        margin: round2(marginShare), deposit: round2(marginShare), fees: feeShare, funding: 0,
+        qty: this.rq(df), sl: o.sl, tp: o.tp,
         liq: this.r(liquidationPrice(o.side, entry, o.leverage)), openedAt: Date.now(),
       }
     } else if (book.position.side === o.side) {
       this.dcaInto(book.position, df, entry, marginShare)
+      book.position.fees = (book.position.fees || 0) + feeShare
     } else {
       return 0
     }
+    this.feesCollected += feeShare
     o.filled += df
     const done = o.qty - o.filled <= 1e-9
     if (done) book.pendingOrders = book.pendingOrders.filter((x) => x.id !== o.id)
@@ -698,6 +759,10 @@ export class Market {
     // maker fills that happened between ticks (market orders hitting user limits)
     const userEvents = this.makerEvents
     this.makerEvents = []
+    if (Date.now() / 1000 >= this.nextFunding) {
+      this.applyFunding(userEvents)
+      this.nextFunding = (Math.floor(Date.now() / 1000 / FUNDING_INTERVAL) + 1) * FUNDING_INTERVAL
+    }
     let liqLong = 0
     let liqShort = 0
     for (const [uid, book] of this.books) {
@@ -712,16 +777,17 @@ export class Market {
           pos.trailLevel = this.r(pos.trail.anchor * (1 + pos.trail.pct))
         }
       }
-      const hit = firstHit(prev, newPrice, pos)
+      let hit = firstHit(prev, newPrice, pos)
+      // already through liq without a crossing this tick (funding just moved it)
+      if (!hit && (pos.side === 'long' ? newPrice <= pos.liq : newPrice >= pos.liq)) hit = { level: 'liq', price: newPrice }
       if (!hit) continue
       const exit = hit.price
-      const realized = hit.level === 'liq' ? -pos.margin : unrealizedPnl(pos.side, pos.entry, exit, pos.qty)
-      const credit = hit.level === 'liq' ? 0 : pos.margin + realized
+      const { credit, net, closeFee, record } = closeOut(pos, exit, hit.level, this.symbol, (n) => this.r(n))
       if (hit.level === 'liq') { this.harvested += pos.margin; this.liquidatedTotal += 1 }
+      this.feesCollected += closeFee
       this.pendingFlow += pos.side === 'long' ? -pos.qty : pos.qty
-      const record = { symbol: this.symbol, side: pos.side, leverage: pos.leverage, entry: pos.entry, exit: this.r(exit), qty: pos.qty, margin: pos.margin, pnl: Math.round(realized * 100) / 100, reason: hit.level, closedAt: Date.now() }
-      this.settle(uid, { credit, pnl: realized, record })
-      userEvents.push({ userId: uid, symbol: this.symbol, event: { type: hit.level, symbol: this.symbol, side: pos.side, pnl: Math.round(realized * 100) / 100, price: this.r(exit), id: Date.now() + Math.random() } })
+      this.settle(uid, { credit, pnl: net, record })
+      userEvents.push({ userId: uid, symbol: this.symbol, event: { type: hit.level, symbol: this.symbol, side: pos.side, pnl: record.pnl, fee: record.fee, price: this.r(exit), id: Date.now() + Math.random() } })
       book.position = null
       this.dropIfEmpty(uid)
     }
@@ -806,6 +872,8 @@ export class Market {
       harvested: Math.round(this.harvested),
       liquidatedTotal: this.liquidatedTotal,
       autoHunt: this.autoHunt,
+      fees: Math.round(this.feesCollected),
+      funding: { rate: this.fundingRate(), next: this.nextFunding },
     }
   }
 
@@ -858,4 +926,4 @@ export class Market {
   }
 }
 
-export { qtyFromMargin, liquidationPrice, unrealizedPnl }
+export { qtyFromMargin, liquidationPrice, unrealizedPnl, closeOut }

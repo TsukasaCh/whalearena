@@ -18,6 +18,20 @@ export const HIST_HOURS = HIST_DAYS * 24
 export const INITIAL_BALANCE = 10000
 export const MMR = 0.005
 
+// Trading fees on notional (Binance-style): market orders + SL/TP/trailing
+// closes pay TAKER, resting limit fills pay MAKER. Liquidations pay none.
+// (Mirrored in src/lib/trading.js — keep in sync.)
+export const TAKER_FEE = 0.0005 // 0.05%
+export const MAKER_FEE = 0.0002 // 0.02%
+
+// Funding settles every hour on the hour (UTC). Rate follows the long/short OI
+// imbalance: positive → longs pay shorts, negative → shorts pay longs. It is
+// taken from / added to the position's isolated margin, so liq price moves.
+export const FUNDING_INTERVAL = 3600 // seconds
+export const FUNDING_BASE = 0.0000125 // 0.01% per 8h, spread hourly
+export const FUNDING_K = 0.0004 // rate per unit of (long-short)/(long+short) imbalance
+export const FUNDING_CAP = 0.0005 // ±0.05% per hour
+
 // Reference price the order-flow model is tuned around (BTC-scale). Depth and
 // the ambient/drift/nudge flows scale by (DEPTH_REF / price) so a $0.13 DOGE and
 // a $64k BTC show sane order-book sizes and move by comparable PERCENTAGES.
@@ -45,6 +59,7 @@ export const MARKETS = [
   { symbol: 'TRX', name: 'TRON',      base: 'TRX',  price: 0.145,   vol: 1.2, dp: 6 },
   { symbol: 'TON', name: 'Toncoin',   base: 'TON',  price: 5.4,     vol: 1.5, dp: 4 },
   { symbol: 'PEPE', name: 'Pepe',     base: 'PEPE', price: 0.0000092, vol: 2.2, dp: 10 },
+  { symbol: 'RCLD', name: 'RCLD',     base: 'RCLD', price: 0.5,       vol: 2.0, dp: 5 },
 ]
 export const SYMBOLS = MARKETS.map((m) => m.symbol)
 export const DEFAULT_SYMBOL = 'BTC'
