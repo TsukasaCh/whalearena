@@ -15,7 +15,7 @@ export default function Toast() {
     if (!toast || toast.id === lastId.current) return
     lastId.current = toast.id
     if (toast.type === 'liq') playLiquidation()
-    else if (toast.type === 'tp' || toast.type === 'limitFill' || toast.type === 'spotBuy' || toast.type === 'stakeReward') playProfit()
+    else if (toast.type === 'tp' || toast.type === 'limitFill' || toast.type === 'spotLimitFill' || toast.type === 'spotBuy' || toast.type === 'stakeReward') playProfit()
     else if (toast.type !== 'error' && toast.type !== 'funding' && toast.type !== 'notice') playClose()
     const t = setTimeout(dismiss, toast.type === 'liq' ? 3800 : 2600)
     return () => clearTimeout(t)
@@ -95,6 +95,21 @@ export default function Toast() {
             <div className="text-[10px] text-sub">
               {sym}{toast.side?.toUpperCase()} @ {fmtPrice(toast.price, dp)}
             </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (toast.type === 'spotLimitFill') {
+    const buy = toast.side === 'long' // spot long = buy, short = sell
+    return (
+      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
+        <div className={`flex items-center gap-3 rounded-lg border px-4 py-2.5 shadow-lg ${buy ? 'border-up/40' : 'border-down/40'} bg-panel`}>
+          <span className="text-lg">🎯</span>
+          <div>
+            <div className="text-xs font-semibold text-txt">Spot Limit {buy ? 'Buy' : 'Sell'} Filled{toast.partial ? ' (partial)' : ''}</div>
+            <div className="text-[10px] text-sub">{sym}@ {fmtPrice(toast.price, dp)}</div>
           </div>
         </div>
       </div>
