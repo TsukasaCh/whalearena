@@ -10,6 +10,7 @@ export default function TopBar({ user, isMM, view, onNav }) {
   const dp = useSim((s) => s.dp)
   const symbols = useSim((s) => s.symbols)
   const equity = useSim((s) => s.equity)
+  const balance = useSim((s) => s.balance)
   const crowd = useSim((s) => s.crowd)
   const connected = useSim((s) => s.connected)
   const timeframe = useSim((s) => s.timeframe)
@@ -87,6 +88,7 @@ export default function TopBar({ user, isMM, view, onNav }) {
           <div className={`font-mono text-sm font-semibold ${isMM ? 'text-gold' : 'text-txt'}`}>
             {isMM ? usd(crowd.harvested, 0) : usd(equity)}
           </div>
+          {!isMM && <div className="font-mono text-[10px] text-sub">Avail {usd(balance)}</div>}
         </div>
 
         <div className="flex overflow-hidden rounded-md border border-border">

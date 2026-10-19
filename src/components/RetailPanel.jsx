@@ -13,6 +13,7 @@ import OrderBook from './OrderBook'
 // card, the order form and the trade history for the active mode.
 export default function RetailPanel({ mode = 'perp' }) {
   const equity = useSim((s) => s.equity)
+  const balance = useSim((s) => s.balance)
   const history = useSim((s) => s.history)
   const isSpot = mode === 'spot'
   const trades = history.filter((h) => (isSpot ? h.kind === 'spot' : h.kind !== 'spot'))
@@ -27,8 +28,9 @@ export default function RetailPanel({ mode = 'perp' }) {
           <span className="text-sm font-bold text-txt">{isSpot ? 'Spot' : 'Perpetual'}</span>
         </div>
         <div className="text-right">
-          <div className="text-[10px] uppercase tracking-wide text-sub">Equity</div>
+          <div className="text-[10px] uppercase tracking-wide text-sub" title="Total nilai semua aset: saldo bebas + posisi + order limit + spot + staking">Equity · total assets</div>
           <div className="font-mono text-sm font-semibold text-txt">{usd(equity)}</div>
+          <div className="font-mono text-[10px] text-sub" title="Saldo bebas yang bisa dipakai buka order baru">Available {usd(balance)}</div>
         </div>
       </div>
 

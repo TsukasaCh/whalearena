@@ -10,6 +10,7 @@ const STARTING = 10000
 export default function HomeDashboard({ onEnter }) {
   const name = useAuth((s) => s.session?.user?.name || 'Trader')
   const equity = useSim((s) => s.equity)
+  const balance = useSim((s) => s.balance)
   const stats = useSim((s) => s.stats)
   const history = useSim((s) => s.history)
   const books = useSim((s) => s.books)
@@ -99,7 +100,7 @@ export default function HomeDashboard({ onEnter }) {
 
         {/* stat cards */}
         <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Card label="Equity" value={usd(equity)} />
+          <Card label="Equity · total assets" value={usd(equity)} sub={`Available ${usd(balance)}`} />
           <Card label="Total PnL" value={signedUsd(totalPnl)} sub={pct((totalPnl / STARTING) * 100)} tone={totalPnl >= 0 ? 'up' : 'down'} />
           <Card label="Realized PnL" value={signedUsd(stats.realized || 0)} tone={(stats.realized || 0) >= 0 ? 'up' : 'down'} />
           <Card label="Win Rate" value={stats.trades ? `${fmt(winRate, 0)}%` : '—'} sub={`${stats.wins}/${stats.trades} trades`} />

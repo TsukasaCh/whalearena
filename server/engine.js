@@ -140,7 +140,32 @@ export class MarketHub {
       const book = m.books.get(id)
       if (book && book.position) eq += book.position.margin + unrealizedPnl(book.position.side, book.position.entry, m.price, book.position.qty)
     }
-    return round(eq + this.userSpotValue(id) + this.userStakedValue(id))
+    return round(eq + this.userSpotValue(id) + this.userStakedValue(id) + this.userLockedValue(id))
+  }
+
+  // Value tied up in RESTING orders (so equity = total assets, unchanged when you
+  // place/cancel a limit — the money just moves between available and locked):
+  //  · perp limit → reserved margin + fee on the unfilled part
+  //  · spot buy limit → reserved USDT on the unfilled part
+  //  · spot sell limit → the coins it holds, marked at the spot price
+  userLockedValue(id) {
+    let v = 0
+    for (const m of this.markets.values()) {
+      const book = m.books.get(id)
+      if (!book || !book.pendingOrders) continue
+      for (const o of book.pendingOrders) {
+        const rem = Math.max(0, o.qty - (o.filled || 0))
+        if (rem <= 1e-12) continue
+        const frac = rem / (o.qty || 1)
+        if (o.spot) {
+          if (o.side === 'long') v += (o.reservedUsd || 0) * frac
+          else v += rem * m.price
+        } else {
+          v += ((o.margin || 0) + (o.fee || 0)) * frac
+        }
+      }
+    }
+    return round(v)
   }
   userUnrealized(id) {
     let pnl = 0
