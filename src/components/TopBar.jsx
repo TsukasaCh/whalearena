@@ -48,7 +48,8 @@ export default function TopBar({ user, isMM, view, onNav }) {
           <div className="flex overflow-hidden rounded-md border border-border">
             {[
               { id: 'home', label: '🏠 Home' },
-              { id: 'trade', label: '📈 Trade' },
+              { id: 'spot', label: '💰 Spot' },
+              { id: 'perp', label: '⚡ Perps' },
             ].map((v) => (
               <button
                 key={v.id}

@@ -2,7 +2,7 @@ import express from 'express'
 import { WebSocketServer } from 'ws'
 import { createServer } from 'http'
 import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
+import { dirname, join, sep as pathSep } from 'path'
 import { existsSync } from 'fs'
 import { MarketHub } from './engine.js'
 import { TICK_MS, DEFAULT_SYMBOL } from './constants.js'
@@ -23,8 +23,18 @@ app.post('/api/host', (req, res) => res.json(hostLogin(req.body?.code)))
 
 const dist = join(__dir, '..', 'dist')
 if (existsSync(dist)) {
-  app.use(express.static(dist))
-  app.get(/.*/, (_req, res) => res.sendFile(join(dist, 'index.html')))
+  // Hashed asset filenames change every build, so cache them hard — but NEVER
+  // cache index.html, or a browser keeps loading an old bundle after a rebuild.
+  app.use(express.static(dist, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache')
+      else if (filePath.includes(`${pathSep}assets${pathSep}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    },
+  }))
+  app.get(/.*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache')
+    res.sendFile(join(dist, 'index.html'))
+  })
 }
 
 const server = createServer(app)
@@ -38,16 +48,16 @@ const accountId = (name) => (name || '').toLowerCase()
 // positions are loaded, so they pick up at the price they were left at)
 let restored = 0
 for (const row of await storage.loadMarkets()) {
-  try { if (hub.market(row.symbol)?.restore(JSON.parse(row.state))) restored++ }
+  try { if (hub.marketByKey(row.symbol)?.restore(JSON.parse(row.state))) restored++ }
   catch (e) { console.warn(`market ${row.symbol} restore failed:`, e.message) }
 }
 if (restored) console.log(`Restored ${restored} market(s) from the last run`)
 
-const saveMarket = (symbol) => {
-  const m = hub.market(symbol)
+const saveMarket = (venueKey) => {
+  const m = hub.marketByKey(venueKey)
   if (!m) return Promise.resolve()
-  return Promise.resolve(storage.saveMarket(symbol, JSON.stringify(m.serialize()))).catch((e) =>
-    console.warn(`saveMarket ${symbol} failed:`, e.message)
+  return Promise.resolve(storage.saveMarket(venueKey, JSON.stringify(m.serialize()))).catch((e) =>
+    console.warn(`saveMarket ${venueKey} failed:`, e.message)
   )
 }
 
@@ -105,7 +115,7 @@ wss.on('connection', async (ws, req) => {
   // live positions; the host has no wallet, a per-connection id is fine there
   const id = auth.role === 'trader' ? accountId(auth.name) : 'host:' + Math.random().toString(36).slice(2)
   const symbol = DEFAULT_SYMBOL
-  const client = { ws, user: { ...auth, id }, symbol }
+  const client = { ws, user: { ...auth, id }, symbol, mode: 'perp' }
   clients.add(client)
 
   if (auth.role === 'trader') hub.addUser(id, auth.name, await getAccount(auth.name))
@@ -114,10 +124,11 @@ wss.on('connection', async (ws, req) => {
     type: 'welcome',
     user: auth,
     symbol,
+    mode: client.mode,
     tickers: hub.tickers(),
-    ...hub.snapshot(symbol),
+    ...hub.snapshot(symbol, client.mode),
     me: auth.role === 'trader' ? hub.userState(id) : null,
-    map: auth.role === 'host' ? hub.mapData(symbol) : undefined,
+    map: auth.role === 'host' ? hub.mapData(symbol, client.mode) : undefined,
     lb: buildLeaderboard(),
   })
 
@@ -130,8 +141,9 @@ wss.on('connection', async (ws, req) => {
     if (m.type === 'sub') {
       if (!hub.hasSymbol(m.symbol)) return
       client.symbol = m.symbol
-      send(ws, { type: 'snap', ...hub.snapshot(m.symbol) })
-      if (role === 'host') send(ws, { type: 'map', s: m.symbol, map: hub.mapData(m.symbol) })
+      client.mode = m.mode === 'spot' ? 'spot' : 'perp'
+      send(ws, { type: 'snap', ...hub.snapshot(m.symbol, client.mode) })
+      if (role === 'host') send(ws, { type: 'map', s: m.symbol, md: client.mode, map: hub.mapData(m.symbol, client.mode) })
       return
     }
 
@@ -143,6 +155,33 @@ wss.on('connection', async (ws, req) => {
       } else if (m.type === 'close') {
         const r = hub.closePosition(id, sym)
         if (r.ok) { persist(id); send(ws, meMsg(id, r.event)) }
+      } else if (m.type === 'spotBuy') {
+        const r = hub.spotBuy(id, sym, m)
+        if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
+        persist(id); send(ws, meMsg(id, r.event))
+      } else if (m.type === 'spotSell') {
+        const r = hub.spotSell(id, sym, m)
+        if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
+        persist(id); send(ws, meMsg(id, r.event))
+      } else if (m.type === 'spotLimit') {
+        const r = hub.spotLimit(id, sym, m)
+        if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
+        persist(id); send(ws, meMsg(id, r.event))
+      } else if (m.type === 'spotCancelLimit') {
+        const r = hub.spotCancelLimit(id, sym, m.id)
+        if (r.ok) { persist(id); send(ws, meMsg(id)) }
+      } else if (m.type === 'spotMoveLimit') {
+        const r = hub.spotMoveLimit(id, sym, m.id, m.price)
+        if (!r.ok && r.error) send(ws, { type: 'orderError', error: r.error })
+        send(ws, meMsg(id))
+      } else if (m.type === 'stake') {
+        const r = hub.stake(id, sym, m)
+        if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
+        persist(id); send(ws, meMsg(id, r.event))
+      } else if (m.type === 'unstake') {
+        const r = hub.unstake(id, sym, m)
+        if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
+        persist(id); send(ws, meMsg(id, r.event))
       } else if (m.type === 'modify') {
         const r = hub.modify(id, sym, m)
         if (r.ok) send(ws, meMsg(id))
@@ -159,15 +198,34 @@ wss.on('connection', async (ws, req) => {
         // echo current state either way so a rejected drag reverts the ghost line
         send(ws, meMsg(id))
       }
+    } else if (role === 'host' && m.type === 'adminFund') {
+      // Whale power: credit or set ANY account's balance (host-gated only).
+      const name = (m.name || '').trim()
+      const amt = Number(m.amount)
+      const fundMode = m.fundMode === 'set' ? 'set' : 'add'
+      if (!name || !Number.isFinite(amt)) return send(ws, { type: 'orderError', error: 'Nama atau jumlah tidak valid' })
+      const key = accountId(name)
+      ;(async () => {
+        const row = await storage.findUser(key)
+        if (!row) return send(ws, { type: 'orderError', error: `Akun "${name}" tidak ditemukan` })
+        let u = hub.getUser(key)
+        if (!u) u = hub.addUser(key, row.name, await getAccount(row.name)) // load offline account
+        const balance = hub.fundUser(key, amt, fundMode)
+        await persist(key)
+        send(ws, { type: 'adminResult', name: row.name, balance, fundMode })
+        // push the new wallet to the target if they're online right now
+        for (const c of clients) if (c.user.role === 'trader' && c.user.id === key) send(c.ws, meMsg(key))
+      })().catch((e) => send(ws, { type: 'orderError', error: 'Gagal: ' + e.message }))
     } else if (role === 'host' && m.type === 'mm') {
       hub.mm(sym, m.cmd, m.payload || {})
       if (m.cmd === 'reset' || m.cmd === 'rebase') {
-        // the whole history changed: everyone watching this market reloads it
+        // host manipulates the FUTURES venue: its history changed, so perp
+        // viewers of this symbol reload it (spot keeps running, coupling re-tethers)
         flushDirty()
-        saveMarket(sym)
-        const snap = { type: 'snap', ...hub.snapshot(sym) }
+        saveMarket(hub.vkey(sym, 'perp'))
+        const snap = { type: 'snap', ...hub.snapshot(sym, 'perp') }
         for (const c of clients) {
-          if (c.symbol === sym) send(c.ws, snap)
+          if (c.symbol === sym && c.mode === 'perp') send(c.ws, snap)
           if (c.user.role === 'trader') send(c.ws, meMsg(c.user.id))
         }
         broadcast({ type: 'tickers', tickers: hub.tickers() })
@@ -183,16 +241,27 @@ wss.on('connection', async (ws, req) => {
 })
 
 let frame = 0
+// staking rewards are credited on the hour, every hour (like a real exchange)
+let nextStakePayout = Math.floor(Date.now() / 3600000) * 3600000 + 3600000
 setInterval(() => {
   const deltas = hub.tick()
   frame++
-  const bySym = new Map()
-  for (const d of deltas) bySym.set(d.symbol, d)
 
-  // per-symbol market stream → only clients viewing that symbol
+  // hourly staking payout → realize rewards into every staker's balance
+  if (Date.now() >= nextStakePayout) {
+    nextStakePayout = Math.floor(Date.now() / 3600000) * 3600000 + 3600000
+    for (const { userId, usd } of hub.settleStaking()) {
+      persist(userId)
+      for (const c of clients) if (c.user.role === 'trader' && c.user.id === userId) send(c.ws, meMsg(userId, usd > 0 ? { type: 'stakeReward', amount: usd, id: Date.now() + Math.random() } : undefined))
+    }
+  }
+  const byVenue = new Map()
+  for (const d of deltas) byVenue.set(hub.vkey(d.symbol, d.mode), d)
+
+  // per-venue market stream → only clients viewing that symbol+mode
   for (const c of clients) {
-    const d = bySym.get(c.symbol)
-    if (d) send(c.ws, { type: 'm', s: d.symbol, p: d.price, bc: d.baseCurrent, f: d.finalized || undefined, liq: d.liqEvent || undefined })
+    const d = byVenue.get(hub.vkey(c.symbol, c.mode))
+    if (d) send(c.ws, { type: 'm', s: d.symbol, md: d.mode, p: d.price, bc: d.baseCurrent, f: d.finalized || undefined, liq: d.liqEvent || undefined })
   }
 
   // wallet events (fills / liquidations / SL-TP) → push fresh user state + toast
@@ -207,16 +276,16 @@ setInterval(() => {
   flushDirty()
   // periodic checkpoint of open books (trailing-stop anchors move without events)
   if (frame % 40 === 0) for (const uid of hub.activeUserIds()) persist(uid)
-  // market state: one symbol every 5s (round-robin) so a big write never stalls a tick
-  if (frame % 20 === 0) { const syms = hub.symbols(); saveMarket(syms[(frame / 20) % syms.length]) }
+  // market state: one venue every 5s (round-robin) so a big write never stalls a tick
+  if (frame % 20 === 0) { const keys = hub.venueKeys(); saveMarket(keys[(frame / 20) % keys.length]) }
 
   // lightweight all-symbol price ticks for the markets list / top bar
   if (frame % 2 === 0) broadcast({ type: 'ticks', ticks: hub.priceTicks() })
-  // per-symbol crowd + resting book for the viewer's market
+  // per-venue crowd + resting book for the viewer's market
   if (frame % 2 === 0) {
     for (const c of clients) {
-      send(c.ws, { type: 'c', s: c.symbol, crowd: hub.crowd(c.symbol), resting: hub.restingOrders(c.symbol), book: hub.bookSnapshot(c.symbol) })
-      if (c.user.role === 'host') send(c.ws, { type: 'map', s: c.symbol, map: hub.mapData(c.symbol) })
+      send(c.ws, { type: 'c', s: c.symbol, md: c.mode, crowd: hub.crowd(c.symbol, c.mode), resting: hub.restingOrders(c.symbol, c.mode), book: hub.bookSnapshot(c.symbol, c.mode) })
+      if (c.user.role === 'host') send(c.ws, { type: 'map', s: c.symbol, md: c.mode, map: hub.mapData(c.symbol, c.mode) })
     }
   }
   if (frame % 4 === 0) broadcast({ type: 'lb', lb: buildLeaderboard() })
@@ -232,7 +301,7 @@ const shutdown = async (sig) => {
   console.log(`${sig} — saving market state…`)
   try {
     await Promise.all([
-      ...hub.symbols().map(saveMarket),
+      ...hub.venueKeys().map(saveMarket),
       ...[...hub.users.keys()].map((uid) => persist(uid)),
     ])
     await storage.close()

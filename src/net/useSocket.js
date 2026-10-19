@@ -38,6 +38,9 @@ function dispatch(m) {
     case 'orderError':
       s.setOrderError(m.error)
       break
+    case 'adminResult':
+      s.setNotice(`✓ ${m.name} → $${Number(m.balance).toLocaleString('en-US')}${m.fundMode === 'set' ? ' (set)' : ''}`)
+      break
     default:
       break
   }

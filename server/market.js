@@ -1,6 +1,6 @@
 import {
   BASE_PERIOD, BASE_VOL, HIST_VOL, BASE_CAP, HIST_HOURS,
-  MMR, BOT_TARGET, BOT_MAX, INITIAL_BOTS, DEPTH_REF,
+  MMR, BOT_TARGET, BOT_MAX, INITIAL_BOTS, DEPTH_REF, SPOT_DEPTH_SCALE,
   TAKER_FEE, MAKER_FEE, FUNDING_INTERVAL, FUNDING_BASE, FUNDING_K, FUNDING_CAP, FUNDING_FLOW,
 } from './constants.js'
 
@@ -121,15 +121,21 @@ function nickname() {
 }
 
 export class Market {
-  // cfg: { symbol, name, base, price, vol, dp }  — settle(userId, {credit, pnl, record}) lives on the hub
-  constructor(cfg, settle) {
+  // cfg: { symbol, name, base, price, vol, dp, kind }  — settle(userId, {credit, pnl, record}) lives on the hub
+  // kind: 'perp' (futures: leverage, funding, liquidation) or 'spot' (own book,
+  // own price, thinner liquidity, none of the perp-only mechanics).
+  constructor(cfg, settle, spotFill) {
     this.symbol = cfg.symbol
     this.name = cfg.name
     this.baseAsset = cfg.base
     this.dp = cfg.dp
     this.volScale = cfg.vol || 1
     this.seedPrice = cfg.price
+    this.kind = cfg.kind || 'perp'
+    this.isPerp = this.kind === 'perp'
+    this.liqScale = this.isPerp ? 1 : SPOT_DEPTH_SCALE // spot book is thinner
     this.settle = settle
+    this.spotFill = spotFill // hub callback: a spot limit order filled (credit holdings / proceeds)
     this.books = new Map() // userId -> { position, pendingOrders: [] }
     this.makerEvents = [] // limit fills from market orders, flushed with the next tick
     this.feesCollected = 0 // trading fees paid by real users in this market (the house cut)
@@ -450,7 +456,7 @@ export class Market {
     for (const b of this.books.values()) if (b.position) realActive++
     const participants = this.bots.length + realActive * 4
     const f = this.pf()
-    return depthFor(participants) * f * f // coin depth per $1 (∝ 1/price²)
+    return depthFor(participants) * f * f * this.liqScale // coin depth per $1 (∝ 1/price²)
   }
 
   // Average execution price for a MARKET order of `qty` coins. It walks the book,
@@ -582,6 +588,7 @@ export class Market {
   }
 
   mapEntries() {
+    if (!this.isPerp) return [] // spot has no leverage → no liquidation map / OI
     const arr = this.bots.map((b) => ({ liq: b.liq, side: b.side, notional: b.margin * b.leverage }))
     for (const b of this.books.values()) {
       if (b.position) arr.push({ liq: b.position.liq, side: b.position.side, notional: b.position.margin * b.position.leverage, real: true })
@@ -615,6 +622,16 @@ export class Market {
     df = Math.min(df, o.qty - o.filled)
     if (df <= 1e-12) return 0
     const entry = o.price
+    // spot limit order: the fill credits the user's holdings / USDT on the hub,
+    // not a leveraged position. Side long = buy, short = sell.
+    if (o.spot) {
+      o.filled += df
+      const done = o.qty - o.filled <= 1e-9
+      if (done) book.pendingOrders = book.pendingOrders.filter((x) => x.id !== o.id)
+      if (this.spotFill) this.spotFill(uid, { symbol: this.symbol, side: o.side, price: entry, qty: df, order: o })
+      userEvents.push({ userId: uid, symbol: this.symbol, event: { type: 'spotLimitFill', symbol: this.symbol, side: o.side, price: entry, partial: !done, id: Date.now() + Math.random() } })
+      return df
+    }
     const marginShare = o.margin * (df / o.qty)
     const feeShare = (o.fee || 0) * (df / o.qty) // maker fee, reserved when the order was placed
     if (!book.position) {
@@ -787,7 +804,7 @@ export class Market {
     // maker fills that happened between ticks (market orders hitting user limits)
     const userEvents = this.makerEvents
     this.makerEvents = []
-    if (Date.now() / 1000 >= this.nextFunding) {
+    if (this.isPerp && Date.now() / 1000 >= this.nextFunding) {
       this.applyFunding(userEvents)
       this.nextFunding = (Math.floor(Date.now() / 1000 / FUNDING_INTERVAL) + 1) * FUNDING_INTERVAL
     }
@@ -822,19 +839,21 @@ export class Market {
 
     for (const { uid, book, o, df } of limitFills) this.fillLimitOrder(uid, book, o, df, userEvents)
 
-    // resolve bots
-    const survivors = []
-    for (const b of this.bots) {
-      const hit = firstHit(prev, newPrice, b)
-      if (!hit) { survivors.push(b); continue }
-      this.pendingFlow += b.side === 'long' ? -b.qty : b.qty
-      if (hit.level === 'sl') continue
-      this.harvested += b.margin
-      this.liquidatedTotal += 1
-      if (b.side === 'long') liqLong += 1
-      else liqShort += 1
+    // resolve bots (spot bots are pure liquidity — no leverage, never liquidated)
+    if (this.isPerp) {
+      const survivors = []
+      for (const b of this.bots) {
+        const hit = firstHit(prev, newPrice, b)
+        if (!hit) { survivors.push(b); continue }
+        this.pendingFlow += b.side === 'long' ? -b.qty : b.qty
+        if (hit.level === 'sl') continue
+        this.harvested += b.margin
+        this.liquidatedTotal += 1
+        if (b.side === 'long') liqLong += 1
+        else liqShort += 1
+      }
+      this.bots = survivors
     }
-    this.bots = survivors
 
     let realLiqs = 0
     for (const ue of userEvents) if (ue.event.type === 'liq') { realLiqs++; if (ue.event.side === 'long') liqLong++; else liqShort++ }
@@ -853,7 +872,7 @@ export class Market {
     else if (this.bots.length < BOT_TARGET && Math.random() < 0.75) spawn = 1 + ((Math.random() * 3) | 0)
     for (let i = 0; i < spawn && this.bots.length < BOT_MAX; i++) this.bots.push(this.makeBot(newPrice, pLong))
 
-    if (this.autoHunt && queue.length === 0 && chopTicks === 0 && !spike) {
+    if (this.isPerp && this.autoHunt && queue.length === 0 && chopTicks === 0 && !spike) {
       this.autoCd -= 1
       if (this.autoCd <= 0) {
         const entries = this.mapEntries()
@@ -882,7 +901,7 @@ export class Market {
     this.spike = spike
     this.updateBook() // regrow / recenter the resting bot ladder around the new price
 
-    return { symbol: this.symbol, price: newPrice, baseCurrent: this.baseCurrent, finalized, liqEvent, userEvents }
+    return { symbol: this.symbol, mode: this.kind, price: newPrice, baseCurrent: this.baseCurrent, finalized, liqEvent, userEvents }
   }
 
   crowd() {
@@ -893,6 +912,7 @@ export class Market {
     for (const b of this.books.values()) if (b.position) realTraders++
     return {
       symbol: this.symbol,
+      mode: this.kind,
       traders: this.bots.length,
       realTraders,
       longOI: Math.round(longOI),
@@ -901,7 +921,7 @@ export class Market {
       liquidatedTotal: this.liquidatedTotal,
       autoHunt: this.autoHunt,
       fees: Math.round(this.feesCollected),
-      funding: { rate: this.fundingRate(), next: this.nextFunding },
+      funding: this.isPerp ? { rate: this.fundingRate(), next: this.nextFunding } : null,
     }
   }
 
@@ -918,7 +938,7 @@ export class Market {
   // compact ticker for the markets list / top bar
   ticker() {
     return {
-      symbol: this.symbol, name: this.name, base: this.baseAsset, dp: this.dp,
+      symbol: this.symbol, mode: this.kind, name: this.name, base: this.baseAsset, dp: this.dp,
       price: this.r(this.price), change: Math.round(this.change24h() * 100) / 100,
       spark: this.spark(),
     }
@@ -940,6 +960,7 @@ export class Market {
   snapshot() {
     return {
       symbol: this.symbol,
+      mode: this.kind,
       base: this.base,
       deep: this.deep,
       baseCurrent: this.baseCurrent,

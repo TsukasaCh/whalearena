@@ -2,10 +2,11 @@ import { scryptSync, randomBytes } from 'crypto'
 import { storage } from './storage.js'
 import { INITIAL_BALANCE } from './constants.js'
 
-// Gate for the Whale/admin login (/whale-god). Prefer the env var; otherwise
-// generate a fresh random code each boot (printed to the server console) so the
-// endpoint is never protected by a guessable default like the URL itself.
-export const HOST_CODE = process.env.WHALE_HOST_CODE || randomBytes(6).toString('hex')
+// Gate for the Whale/admin login (/whale-god). The whale can move markets AND
+// top up any account, so this must be hard to guess. Prefer the env var (pin
+// your own in .env); otherwise generate a strong random code each boot (printed
+// to the server console) — never a guessable default like the URL itself.
+export const HOST_CODE = process.env.WHALE_HOST_CODE || randomBytes(24).toString('base64url')
 export const HOST_CODE_FROM_ENV = !!process.env.WHALE_HOST_CODE
 const round = (n) => Math.round(n * 100) / 100
 
@@ -51,12 +52,12 @@ const parse = (s, fallback) => { try { return s ? JSON.parse(s) : fallback } cat
 const toAccount = (u) => ({
   name: u.name,
   balance: u.balance, trades: u.trades || 0, wins: u.wins || 0, realized: u.realized || 0,
-  books: parse(u.books, {}), history: parse(u.history, []),
+  books: parse(u.books, {}), history: parse(u.history, []), spot: parse(u.spot, {}), staked: parse(u.staked, {}),
 })
 
 export async function getAccount(name) {
   const u = await storage.findUser((name || '').toLowerCase())
-  if (!u) return { balance: INITIAL_BALANCE, trades: 0, wins: 0, realized: 0, books: {}, history: [] }
+  if (!u) return { balance: INITIAL_BALANCE, trades: 0, wins: 0, realized: 0, books: {}, history: [], spot: {}, staked: {} }
   return toAccount(u)
 }
 

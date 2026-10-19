@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { useSim } from '../store/useSimStore'
+import { useSim, accruedStake, STAKE_APY } from '../store/useSimStore'
 import { useAuth } from '../store/useAuth'
 import { unrealizedPnl, roe } from '../lib/trading'
-import { usd, fmt, fmtPrice, pct, signedUsd } from '../lib/format'
+import { usd, fmt, fmtPrice, fmtQty, pct, signedUsd } from '../lib/format'
 import ShareCard from './ShareCard'
 
 const STARTING = 10000
@@ -13,6 +13,8 @@ export default function HomeDashboard({ onEnter }) {
   const stats = useSim((s) => s.stats)
   const history = useSim((s) => s.history)
   const books = useSim((s) => s.books)
+  const spot = useSim((s) => s.spot)
+  const staked = useSim((s) => s.staked)
   const symbols = useSim((s) => s.symbols)
   const leaderboard = useSim((s) => s.leaderboard)
   const setSymbol = useSim((s) => s.setSymbol)
@@ -30,8 +32,26 @@ export default function HomeDashboard({ onEnter }) {
     if (b.position) positions.push({ symbol: sym, ...b.position })
     for (const o of b.pendingOrders || []) pending.push({ symbol: sym, ...o })
   }
+  // spot holdings across every market
+  const holdings = []
+  for (const [sym, h] of Object.entries(spot || {})) {
+    if (!h || h.qty <= 0) continue
+    const price = metaOf(sym).price ?? 0
+    holdings.push({ symbol: sym, qty: h.qty, cost: h.cost, avg: h.qty ? h.cost / h.qty : 0, price, value: h.qty * price, pnl: h.qty * price - h.cost })
+  }
+  const spotValue = holdings.reduce((s, h) => s + h.value, 0)
+  // staked coins across every market (accrued to now)
+  const stakes = []
+  for (const [sym, st] of Object.entries(staked || {})) {
+    if (!st || st.qty <= 0) continue
+    const mk = metaOf(sym)
+    const px = mk.spot ?? mk.price ?? 0
+    const qty = accruedStake(st)
+    stakes.push({ symbol: sym, qty, price: px, value: qty * px, earned: (st.earned || 0) + (qty - st.qty), dp: mk.dp ?? 2 })
+  }
+  const stakedValue = stakes.reduce((s, x) => s + x.value, 0)
 
-  const openMarket = (sym) => { setSymbol(sym); onEnter() }
+  const openMarket = (sym, mode = 'perp') => { setSymbol(sym); onEnter(mode) }
   const cancelOrder = (sym, id) => { if (cancelLimitFor) cancelLimitFor({ type: 'cancelLimit', symbol: sym, id }) }
 
   const shareAccount = () =>
@@ -63,10 +83,16 @@ export default function HomeDashboard({ onEnter }) {
               🚀 Flex PnL
             </button>
             <button
-              onClick={() => onEnter()}
+              onClick={() => onEnter('spot')}
+              className="rounded-lg border border-accent/40 bg-accent/10 px-4 py-2.5 text-sm font-bold text-accent hover:bg-accent/20"
+            >
+              💰 Spot
+            </button>
+            <button
+              onClick={() => onEnter('perp')}
               className="rounded-lg bg-accent px-5 py-2.5 text-sm font-bold text-white hover:brightness-110"
             >
-              📈 Enter Market
+              ⚡ Perps
             </button>
           </div>
         </div>
@@ -167,6 +193,52 @@ export default function HomeDashboard({ onEnter }) {
               )}
             </Panel>
 
+            <Panel title="💰 Spot Holdings" right={<span className="text-[10px] text-sub">{holdings.length ? usd(spotValue) : `${holdings.length} coins`}</span>}>
+              {holdings.length === 0 ? (
+                <Empty>No coins held · <button onClick={() => onEnter('spot')} className="font-semibold text-accent hover:underline">buy spot →</button></Empty>
+              ) : (
+                <div className="space-y-1.5">
+                  {holdings.map((h) => {
+                    const dp = metaOf(h.symbol).dp ?? 2
+                    const r = h.cost ? (h.pnl / h.cost) * 100 : 0
+                    return (
+                      <div key={h.symbol} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-panel2/50 px-3 py-2">
+                        <button onClick={() => openMarket(h.symbol, 'spot')} className="flex items-center gap-2 text-left">
+                          <span className="rounded bg-accent/15 px-2 py-0.5 text-xs font-bold text-accent">{h.symbol} SPOT</span>
+                          <span className="font-mono text-[11px] text-sub">{fmtQty(h.qty)} · avg {fmtPrice(h.avg, dp)}</span>
+                        </button>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right">
+                            <div className="font-mono text-sm font-bold text-txt">{usd(h.value)}</div>
+                            <div className={`font-mono text-[10px] ${h.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(h.pnl)} · {pct(r)}</div>
+                          </div>
+                          <button onClick={() => openMarket(h.symbol, 'spot')} className="rounded-md bg-panel2 px-2.5 py-1 text-xs font-semibold text-txt hover:bg-border">Trade →</button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Panel>
+
+            <Panel title={`🔒 Staking · ${(STAKE_APY * 100).toFixed(0)}% APY`} right={<span className="text-[10px] text-sub">{stakes.length ? usd(stakedValue) : '—'}</span>}>
+              {stakes.length === 0 ? (
+                <Empty>No coins staked · <button onClick={() => onEnter('spot')} className="font-semibold text-accent hover:underline">stake spot coins →</button></Empty>
+              ) : (
+                <div className="space-y-1.5">
+                  {stakes.map((x) => (
+                    <div key={x.symbol} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-panel2/50 px-3 py-2">
+                      <button onClick={() => openMarket(x.symbol, 'spot')} className="flex items-center gap-2 text-left">
+                        <span className="rounded bg-up/15 px-2 py-0.5 text-xs font-bold text-up">{x.symbol} STAKED</span>
+                        <span className="font-mono text-[11px] text-sub">{fmtQty(x.qty)} · +{fmtQty(x.earned)} earned</span>
+                      </button>
+                      <div className="font-mono text-sm font-bold text-txt">{usd(x.value)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Panel>
+
             <Panel title="⏳ Pending Limit Orders" right={<span className="text-[10px] text-sub">{pending.length} resting</span>}>
               {pending.length === 0 ? (
                 <Empty>No resting limit orders</Empty>
@@ -193,18 +265,32 @@ export default function HomeDashboard({ onEnter }) {
                 <Empty>No closed trades yet</Empty>
               ) : (
                 <div className="space-y-1">
-                  {history.slice(0, 12).map((h, i) => (
-                    <div key={i} className="flex items-center justify-between gap-2 rounded bg-panel2/50 px-3 py-1.5 font-mono text-xs">
-                      <span className="flex items-center gap-2">
-                        <span className="w-12 font-bold text-txt">{h.symbol}</span>
-                        <span className={h.side === 'long' ? 'text-up' : 'text-down'}>{h.side === 'long' ? 'LONG' : 'SHORT'} {h.leverage}x</span>
-                      </span>
-                      <span className="hidden text-[10px] text-sub sm:inline">{fmtPrice(h.entry, metaOf(h.symbol).dp ?? 2)} → {fmtPrice(h.exit, metaOf(h.symbol).dp ?? 2)}</span>
-                      <span className="text-[10px] text-sub">{reasonLabel(h.reason)}</span>
-                      <span className={`w-24 text-right ${h.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(h.pnl)}</span>
-                      <button onClick={() => shareTrade(h)} title="Flex this trade" className="text-gold hover:brightness-125">🚀</button>
-                    </div>
-                  ))}
+                  {history.slice(0, 12).map((h, i) => {
+                    const dp = metaOf(h.symbol).dp ?? 2
+                    const spotTrade = h.kind === 'spot'
+                    return (
+                      <div key={i} className="flex items-center justify-between gap-2 rounded bg-panel2/50 px-3 py-1.5 font-mono text-xs">
+                        <span className="flex items-center gap-2">
+                          <span className="w-12 font-bold text-txt">{h.symbol}</span>
+                          {spotTrade ? (
+                            <span className="text-accent">SPOT SELL</span>
+                          ) : (
+                            <span className={h.side === 'long' ? 'text-up' : 'text-down'}>{h.side === 'long' ? 'LONG' : 'SHORT'} {h.leverage}x</span>
+                          )}
+                        </span>
+                        <span className="hidden text-[10px] text-sub sm:inline">
+                          {spotTrade ? `${fmtQty(h.qty)} @ ${fmtPrice(h.price, dp)}` : `${fmtPrice(h.entry, dp)} → ${fmtPrice(h.exit, dp)}`}
+                        </span>
+                        <span className="text-[10px] text-sub">{reasonLabel(h.reason)}</span>
+                        <span className={`w-24 text-right ${h.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(h.pnl)}</span>
+                        {spotTrade ? (
+                          <span className="w-4" />
+                        ) : (
+                          <button onClick={() => shareTrade(h)} title="Flex this trade" className="text-gold hover:brightness-125">🚀</button>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </Panel>
@@ -261,5 +347,6 @@ function reasonLabel(r) {
   if (r === 'tp') return 'TP'
   if (r === 'sl') return 'SL'
   if (r === 'trail') return 'trail'
+  if (r === 'spot') return 'spot'
   return 'closed'
 }

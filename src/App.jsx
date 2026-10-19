@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from './store/useAuth'
+import { useSim } from './store/useSimStore'
 import { useSocket } from './net/useSocket'
 import { useRoute, navigate, ROUTES } from './router'
 import Landing from './components/Landing'
@@ -40,29 +41,38 @@ export default function App() {
 
 function TradingApp({ isMM = false }) {
   const session = useAuth((s) => s.session)
-  const [view, setView] = useState('home') // trader view: 'home' | 'trade'
+  const [view, setView] = useState('home') // trader view: 'home' | 'spot' | 'perp'
   const showHome = !isMM && view === 'home'
+  const mode = view === 'spot' ? 'spot' : 'perp' // which trading surface the panel shows
+  const setMode = useSim((s) => s.setMode)
+  const connected = useSim((s) => s.connected)
+
+  // subscribe the socket to the matching venue whenever the trader switches tab
+  // (or reconnects) — Spot and Futures are different order books on the server
+  useEffect(() => {
+    if (!isMM && (view === 'spot' || view === 'perp') && connected) setMode(mode)
+  }, [view, mode, isMM, connected, setMode])
 
   return (
     <div className="flex h-full flex-col bg-bg text-txt">
       <TopBar user={session.user} isMM={isMM} view={view} onNav={setView} />
 
       {showHome ? (
-        <HomeDashboard onEnter={() => setView('trade')} />
+        <HomeDashboard onEnter={(m = 'perp') => setView(m)} />
       ) : (
         <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
           <section className="flex min-h-[46vh] flex-1 flex-col border-b border-border lg:min-h-0 lg:border-b-0 lg:border-r">
             <div className="min-h-0 flex-1">
               <Chart />
             </div>
-            <ConceptStrip isMM={isMM} />
+            <ConceptStrip isMM={isMM} mode={mode} />
           </section>
           <aside
             className={`flex min-h-0 w-full shrink-0 flex-col lg:w-[380px] ${
               isMM ? 'lg:border-l-2 lg:border-gold/40' : ''
             }`}
           >
-            {isMM ? <MarketMakerPanel /> : <RetailPanel />}
+            {isMM ? <MarketMakerPanel /> : <RetailPanel mode={mode} />}
           </aside>
         </main>
       )}
@@ -72,7 +82,7 @@ function TradingApp({ isMM = false }) {
   )
 }
 
-function ConceptStrip({ isMM }) {
+function ConceptStrip({ isMM, mode = 'perp' }) {
   return (
     <div className="hidden items-center gap-3 border-t border-border bg-panel px-4 py-1.5 text-[11px] text-sub lg:flex">
       {isMM ? (
@@ -83,9 +93,17 @@ function ConceptStrip({ isMM }) {
             <span className="text-down">stop-loss &amp; liquidation</span>, then harvest their margin.
           </span>
         </>
+      ) : mode === 'spot' ? (
+        <>
+          <span className="font-semibold text-accent">Spot:</span>
+          <span>
+            buy the coin outright and hold it — <span className="text-up">no leverage, no liquidation</span>.
+            Your PnL is just price × the coins you own.
+          </span>
+        </>
       ) : (
         <>
-          <span className="font-semibold text-accent">You are a trader:</span>
+          <span className="font-semibold text-accent">Perpetual:</span>
           <span>
             open a leveraged position — but the Whale is hunting your{' '}
             <span className="text-down">liquidation price</span>.

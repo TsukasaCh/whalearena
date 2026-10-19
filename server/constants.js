@@ -47,6 +47,22 @@ export const BOT_TARGET = 95
 export const BOT_MAX = 140
 export const INITIAL_BOTS = 85
 
+// ── Spot vs Futures venues ────────────────────────────────────────────────────
+// Every symbol runs TWO independent markets: a futures (perp) book and a spot
+// book, each with its own price, order book, candle history and liquidity. They
+// are tethered by an arbitrage pull each tick (see MarketHub.couple): the price
+// gap (basis) is closed a little every tick, and the THINNER book moves more —
+// so a short squeeze on deep futures drags a thin spot market up hard behind it.
+export const SPOT_DEPTH_SCALE = 0.4 // spot books are thinner than futures
+export const BASIS_PULL = 0.06 // per-tick fraction of the spot/perp gap arbitraged away
+
+// ── Staking ───────────────────────────────────────────────────────────────────
+// Move spot coins into a staking pocket to earn yield; move them back to spot to
+// trade. Rewards accrue continuously (compounded) at this annual rate and are
+// paid in the same coin, so the staked balance slowly grows on its own.
+export const STAKE_APY = 0.07 // 7% annual
+export const YEAR_MS = 365 * 24 * 60 * 60 * 1000
+
 // ── Tradable markets ────────────────────────────────────────────────────────
 // Each market runs its own price sim, order book, bots and history. `price` is
 // the seed spot; `vol` scales that market's live/hist volatility (alts chop more

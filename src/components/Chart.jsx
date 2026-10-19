@@ -46,6 +46,21 @@ function FundingBadge() {
   )
 }
 
+// Futures premium vs spot (basis). Both prices arrive on the ticker stream, so
+// this shows the gap live in either venue — it blows out during a squeeze.
+function BasisBadge() {
+  const meta = useSim((s) => s.symbols.find((x) => x.symbol === s.symbol))
+  if (!meta || !meta.spot || !meta.price) return null
+  const prem = ((meta.price - meta.spot) / meta.spot) * 100
+  const flat = Math.abs(prem) < 0.05
+  const pos = prem >= 0
+  return (
+    <span className="rounded bg-panel2/90 px-2 py-1 font-mono text-sub" title="Futures premium vs spot (basis)">
+      Basis <span className={flat ? 'text-sub' : pos ? 'text-up' : 'text-down'}>{pos ? '+' : ''}{prem.toFixed(2)}%</span>
+    </span>
+  )
+}
+
 export default function Chart() {
   const wrapRef = useRef(null)
   const legendRef = useRef(null)
@@ -60,12 +75,29 @@ export default function Chart() {
 
   const symbol = useSim((s) => s.symbol)
   const dp = useSim((s) => s.dp)
+  const mode = useSim((s) => s.mode)
   const roundDp = (n) => { const d = useSim.getState().dp || 2; const f = Math.pow(10, d); return Math.round(n * f) / f }
 
   // act on the hovered price: set SL/TP on a live position, or place a limit entry
   const placeFromChart = () => {
     if (!quote) return
     const s = useSim.getState()
+    if (quote.kind === 'spotLimit') {
+      // spot: buy below market = accumulate, sell above = distribute. Size comes
+      // from the Spot panel draft (spend for buys, coin qty for sells).
+      const price = roundDp(quote.price)
+      if (quote.side === 'buy') {
+        const spend = Number(s.spotDraft.spend)
+        if (!spend || spend <= 0) { s.setOrderError('Set jumlah beli di panel Spot dulu.'); setQuote(null); return }
+        s.spotLimit({ side: 'buy', price, spend })
+      } else {
+        const qty = Number(s.spotDraft.qty)
+        if (!qty || qty <= 0) { s.setOrderError('Set jumlah jual di panel Spot dulu.'); setQuote(null); return }
+        s.spotLimit({ side: 'sell', price, qty })
+      }
+      setQuote(null)
+      return
+    }
     if (quote.kind === 'sl') s.modifyPosition({ sl: roundDp(quote.price) })
     else if (quote.kind === 'tp') s.modifyPosition({ tp: roundDp(quote.price) })
     else {
@@ -218,7 +250,11 @@ export default function Chart() {
         const pos = st.position
         let q = null
         if (p != null && p > 0 && mkt) {
-          if (pos) {
+          if (st.mode === 'spot') {
+            // spot: drop a limit buy (below) / sell (above) at the hovered price
+            if (Math.abs(p - mkt) / mkt > 0.0002)
+              q = { y: Math.round(param.point.y), price: p, kind: 'spotLimit', side: p < mkt ? 'buy' : 'sell' }
+          } else if (pos) {
             const long = pos.side === 'long'
             const profitUp = long // profit is up for a long
             const inProfit = profitUp ? p > pos.entry : p < pos.entry
@@ -247,7 +283,7 @@ export default function Chart() {
         const d = draggable.get(key)
         if (d) { try { series.removePriceLine(d.line) } catch (e) { /* noop */ } draggable.delete(key) }
       }
-      if (!position) return
+      if (!position || useSim.getState().mode !== 'perp') return // position lines are futures-only
       const addStatic = (price, color, title, style = LineStyle.Solid, width = 1) =>
         linesRef.current.push(series.createPriceLine({ price, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title }))
       addStatic(position.entry, '#3b82f6', 'ENTRY', LineStyle.Solid, 2)
@@ -309,13 +345,19 @@ export default function Chart() {
       }
       for (const o of list) {
         if (drag && drag.key === o.id) continue // don't fight the user's drag
+        const color = o.spot ? (o.side === 'long' ? '#00E676' : '#FF5252') : '#3b82f6'
         const ex = draggable.get(o.id)
-        if (ex) { ex.price = o.price; ex.side = o.side; ex.line.applyOptions({ price: o.price, title: lineTitle(o) }) }
-        else draggable.set(o.id, { kind: 'limit', side: o.side, price: o.price, line: series.createPriceLine({ price: o.price, color: '#3b82f6', lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: lineTitle(o) }) })
+        if (ex) { ex.price = o.price; ex.side = o.side; ex.spot = !!o.spot; ex.line.applyOptions({ price: o.price, title: lineTitle(o) }) }
+        else draggable.set(o.id, { kind: 'limit', spot: !!o.spot, side: o.side, price: o.price, line: series.createPriceLine({ price: o.price, color, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: lineTitle(o) }) })
       }
     }
-    drawLimits(useSim.getState().pendingOrders)
-    const unsubLimit = useSim.subscribe((s) => s.pendingOrders, drawLimits)
+    // draw the ACTIVE venue's resting limit orders (spot vs futures book)
+    const activeOrders = () => { const s = useSim.getState(); return s.mode === 'spot' ? s.spotPending : s.pendingOrders }
+    const redrawLimits = () => drawLimits(activeOrders())
+    redrawLimits()
+    const unsubLimit = useSim.subscribe((s) => s.pendingOrders, redrawLimits)
+    const unsubSpotLimit = useSim.subscribe((s) => s.spotPending, redrawLimits)
+    const unsubMode = useSim.subscribe((s) => s.mode, () => { redrawLimits(); drawLines(useSim.getState().position); setQuote(null) })
 
     // --- drag any draggable line (limit reprice, or set/move SL & TP) --------
     const relY = (e) => e.clientY - el.getBoundingClientRect().top
@@ -323,7 +365,7 @@ export default function Chart() {
       let hit = null, best = 10
       for (const [key, d] of draggable) {
         if (d.kind === 'limit') {
-          const o = useSim.getState().pendingOrders.find((x) => x.id === key)
+          const o = activeOrders().find((x) => x.id === key)
           if (!o || o.filled > 1e-6) continue // partially filled → locked
         }
         const ly = series.priceToCoordinate(d.price)
@@ -336,7 +378,7 @@ export default function Chart() {
     const onDown = (e) => {
       const h = lineAtY(relY(e))
       if (!h) return
-      drag = { key: h.key, kind: h.kind, side: h.side, price: h.price, startPrice: h.price }
+      drag = { key: h.key, kind: h.kind, spot: h.spot, side: h.side, price: h.price, startPrice: h.price }
       chart.applyOptions({ handleScroll: false, handleScale: false })
       el.style.cursor = 'ns-resize'
       e.preventDefault()
@@ -366,13 +408,13 @@ export default function Chart() {
       if (moved) {
         // The server echoes `me` for both an accepted AND a rejected change, so
         // the optimistic line either confirms or snaps back — no ghost line.
-        if (d.kind === 'limit') useSim.getState().moveLimit(d.key, finalPrice)
+        if (d.kind === 'limit') (d.spot ? useSim.getState().spotMoveLimit : useSim.getState().moveLimit)(d.key, finalPrice)
         else if (d.kind === 'sl') useSim.getState().modifyPosition({ sl: finalPrice })
         else if (d.kind === 'tp') useSim.getState().modifyPosition({ tp: finalPrice })
       } else {
         // no real move → snap the optimistic drag back to the live store state
         drawLines(useSim.getState().position)
-        drawLimits(useSim.getState().pendingOrders)
+        redrawLimits()
       }
     }
     el.addEventListener('mousedown', onDown)
@@ -425,6 +467,8 @@ export default function Chart() {
       unsubDisp()
       unsubPos()
       unsubLimit()
+      unsubSpotLimit()
+      unsubMode()
       unsubLiq()
       unsubEpoch()
       el.removeEventListener('mousedown', onDown)
@@ -439,8 +483,9 @@ export default function Chart() {
       <div ref={wrapRef} className="h-full w-full" />
       <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2 text-xs">
         <span className="rounded bg-panel2/90 px-2 py-1 font-semibold text-txt">{symbol}/USDT</span>
-        <span className="rounded bg-panel2/90 px-2 py-1 text-sub">Perp · Simulated</span>
-        <FundingBadge />
+        <span className="rounded bg-panel2/90 px-2 py-1 text-sub">{mode === 'spot' ? 'Spot' : 'Perp'} · Simulated</span>
+        <BasisBadge />
+        {mode !== 'spot' && <FundingBadge />}
       </div>
       <div
         ref={legendRef}
@@ -462,7 +507,7 @@ export default function Chart() {
               ? 'bg-up text-black'
               : quote.kind === 'sl'
                 ? 'bg-down text-black'
-                : quote.side === 'long'
+                : quote.side === 'long' || quote.side === 'buy'
                   ? 'bg-up text-black'
                   : 'bg-down text-black'
           }`}
@@ -473,9 +518,13 @@ export default function Chart() {
             ? '✓ Set TP'
             : quote.kind === 'sl'
               ? '✕ Set SL'
-              : quote.side === 'long'
-                ? '▲ Limit Long'
-                : '▼ Limit Short'}{' '}
+              : quote.kind === 'spotLimit'
+                ? quote.side === 'buy'
+                  ? '▲ Limit Buy'
+                  : '▼ Limit Sell'
+                : quote.side === 'long'
+                  ? '▲ Limit Long'
+                  : '▼ Limit Short'}{' '}
           · {fmtPrice(quote.price, dp)}
         </button>
       )}

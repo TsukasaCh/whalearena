@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useSim } from '../store/useSimStore'
-import { signedUsd, fmtPrice } from '../lib/format'
+import { signedUsd, fmtPrice, fmtQty, usd } from '../lib/format'
 import { playLiquidation, playProfit, playClose } from '../lib/sound'
 
 export default function Toast() {
@@ -15,8 +15,8 @@ export default function Toast() {
     if (!toast || toast.id === lastId.current) return
     lastId.current = toast.id
     if (toast.type === 'liq') playLiquidation()
-    else if (toast.type === 'tp' || toast.type === 'limitFill') playProfit()
-    else if (toast.type !== 'error' && toast.type !== 'funding') playClose()
+    else if (toast.type === 'tp' || toast.type === 'limitFill' || toast.type === 'spotBuy' || toast.type === 'stakeReward') playProfit()
+    else if (toast.type !== 'error' && toast.type !== 'funding' && toast.type !== 'notice') playClose()
     const t = setTimeout(dismiss, toast.type === 'liq' ? 3800 : 2600)
     return () => clearTimeout(t)
   }, [toast, dismiss])
@@ -29,6 +29,17 @@ export default function Toast() {
         <div className="flex items-center gap-2 rounded-lg border border-down/40 bg-panel px-4 py-2.5 shadow-lg">
           <span className="text-lg">⚠️</span>
           <span className="text-xs font-semibold text-down">{toast.msg}</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (toast.type === 'notice') {
+    return (
+      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
+        <div className="flex items-center gap-2 rounded-lg border border-up/40 bg-panel px-4 py-2.5 shadow-lg">
+          <span className="text-lg">✅</span>
+          <span className="text-xs font-semibold text-up">{toast.msg}</span>
         </div>
       </div>
     )
@@ -85,6 +96,59 @@ export default function Toast() {
               {sym}{toast.side?.toUpperCase()} @ {fmtPrice(toast.price, dp)}
             </div>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (toast.type === 'stakeReward') {
+    return (
+      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
+        <div className="flex items-center gap-3 rounded-lg border border-up/40 bg-panel px-4 py-2.5 shadow-lg">
+          <span className="text-lg">🌾</span>
+          <div>
+            <div className="text-xs font-semibold text-txt">Staking Reward</div>
+            <div className="text-[10px] text-sub">Hourly payout · 7% APY</div>
+          </div>
+          <div className="font-mono text-sm font-bold text-up">+{usd(toast.amount)}</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (toast.type === 'staked') {
+    const staking = toast.action === 'stake'
+    return (
+      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-panel px-4 py-2.5 shadow-lg">
+          <span className="text-lg">🔒</span>
+          <div>
+            <div className="text-xs font-semibold text-txt">{staking ? 'Staked' : 'Unstaked'}</div>
+            <div className="text-[10px] text-sub">{sym}{fmtQty(toast.qty)} · {staking ? 'earning 7% APY' : 'back in spot'}</div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (toast.type === 'spotBuy' || toast.type === 'spotSell') {
+    const buy = toast.type === 'spotBuy'
+    const win = (toast.pnl ?? 0) >= 0
+    return (
+      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
+        <div className={`flex items-center gap-3 rounded-lg border px-4 py-2.5 shadow-lg ${buy ? 'border-up/40 bg-panel' : win ? 'border-up/40 bg-panel' : 'border-down/40 bg-panel'}`}>
+          <span className="text-lg">{buy ? '🛒' : '💵'}</span>
+          <div>
+            <div className="text-xs font-semibold text-txt">{buy ? 'Spot Buy Filled' : 'Spot Sell Filled'}</div>
+            <div className="text-[10px] text-sub">
+              {sym}{fmtQty(toast.qty)} @ {fmtPrice(toast.price, dp)}
+            </div>
+          </div>
+          {buy ? (
+            <div className="font-mono text-sm font-bold text-txt">{usd(toast.cost)}</div>
+          ) : (
+            <div className={`font-mono text-sm font-bold ${win ? 'text-up' : 'text-down'}`}>{signedUsd(toast.pnl)}</div>
+          )}
         </div>
       </div>
     )

@@ -6,9 +6,20 @@ import CrowdStats from './CrowdStats'
 export default function MarketMakerPanel() {
   const mm = useSim((s) => s.mm)
   const symbol = useSim((s) => s.symbol)
+  const adminFund = useSim((s) => s.adminFund)
   const [force, setForce] = useState(0)
   const [target, setTarget] = useState('')
   const [rebaseTo, setRebaseTo] = useState('')
+  const [fundName, setFundName] = useState('')
+  const [fundAmt, setFundAmt] = useState('')
+
+  const fund = (fundMode) => {
+    const name = fundName.trim()
+    const amt = Number(fundAmt)
+    if (!name || !Number.isFinite(amt)) return
+    adminFund(name, amt, fundMode)
+    setFundAmt('')
+  }
 
   const rebase = () => {
     const p = Number(rebaseTo)
@@ -154,6 +165,42 @@ Seluruh history candle ${symbol} dibuat ulang di level harga ini (spike lama hil
             <button onClick={rebase} className="rounded bg-gold/20 px-3 py-1.5 text-xs font-bold text-gold hover:bg-gold/30">
               Rebase
             </button>
+          </div>
+        </div>
+
+        {/* Fund a trader: whale credits / sets any account's balance */}
+        <div className="rounded-lg border border-gold/30 bg-gold/5 p-3">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gold">💸 Fund a Trader</div>
+          <div className="mb-2 text-[10px] leading-snug text-sub">
+            Isi / set saldo akun mana pun (online atau offline). Khusus God Mode.
+          </div>
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={fundName}
+              placeholder="username"
+              onChange={(e) => setFundName(e.target.value)}
+              className="w-full rounded border border-border bg-panel2 px-2 py-1.5 text-xs text-txt outline-none placeholder:text-sub/40"
+            />
+            <div className="flex items-center rounded border border-border bg-panel2 px-2">
+              <span className="text-sub">$</span>
+              <input
+                type="number"
+                value={fundAmt}
+                placeholder="amount"
+                onChange={(e) => setFundAmt(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && fund('add')}
+                className="w-full bg-transparent px-2 py-1.5 font-mono text-xs text-txt outline-none placeholder:text-sub/40"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => fund('add')} className="rounded bg-up/15 py-1.5 text-xs font-bold text-up hover:bg-up/25">
+                + Add
+              </button>
+              <button onClick={() => fund('set')} className="rounded bg-accent/20 py-1.5 text-xs font-bold text-accent hover:bg-accent/30">
+                = Set
+              </button>
+            </div>
           </div>
         </div>
 
