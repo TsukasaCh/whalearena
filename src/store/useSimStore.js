@@ -241,7 +241,13 @@ export const useSim = create(
     placeLimit: (payload) => { const s = get(); s._send && s._send({ type: 'limit', symbol: s.symbol, ...payload }) },
     placeAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'algo', symbol: s.symbol, ...payload }) },
     cancelAlgo: (id, symbol, spot) => { const s = get(); s._send && s._send({ type: 'cancelAlgo', symbol: symbol || s.symbol, id, spot: !!spot }) },
-    setLbHidden: (hidden) => { const s = get(); set({ lbHidden: !!hidden }); s._send && s._send({ type: 'setLbHidden', hidden: !!hidden }) },
+    setLbHidden: (hidden) => {
+      const s = get()
+      // never show "hidden" unless the request actually left the browser
+      if (!s._send || !s.connected) return s.setOrderError('Tidak terhubung ke server — coba lagi sebentar.')
+      set({ lbHidden: !!hidden })
+      s._send({ type: 'setLbHidden', hidden: !!hidden })
+    },
     startGrid: (payload) => { const s = get(); s._send && s._send({ type: 'gridStart', symbol: s.symbol, ...payload }) },
     stopGrid: (id) => { const s = get(); s._send && s._send({ type: 'gridStop', id }) },
     placeSpotAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'spotAlgo', symbol: s.symbol, ...payload }) },

@@ -88,6 +88,9 @@ const refreshHumans = async () => { try { humanRows = await topTraders(60) } cat
 refreshHumans()
 setInterval(refreshHumans, 4000)
 
+// per-account chain of lb_hidden writes, so two quick toggles can never land out of order
+const lbWrites = new Map()
+
 function buildLeaderboard() {
   const online = new Set()
   for (const c of clients) if (c.user.role === 'trader') online.add(c.user.id)
@@ -202,10 +205,30 @@ wss.on('connection', async (ws, req) => {
         // privacy setting: show / hide this account on the leaderboard
         const u = hub.getUser(id)
         if (!u) return
-        u.lbHidden = !!m.hidden
-        Promise.resolve(storage.setLbHidden(id, u.lbHidden)).then(refreshHumans).catch((e) => console.warn('setLbHidden failed:', e.message))
-        send(ws, meMsg(id))
+        const want = !!m.hidden
+        // every tab / device of this account gets the current setting
+        const echo = () => { for (const c of clients) if (c.user.role === 'trader' && c.user.id === id) send(c.ws, meMsg(id)) }
+        const now = Date.now()
+        // no-ops and more than one change per second are ignored (the echo puts the
+        // sender's switch back): each real change costs a DB write + a board rebuild
+        if (want === !!u.lbHidden || now - (u.lbHiddenAt || 0) < 1000) return echo()
+        u.lbHiddenAt = now
+        const prev = !!u.lbHidden
+        u.lbHidden = want
+        echo()
         broadcast({ type: 'lb', lb: buildLeaderboard() })
+        const tail = (lbWrites.get(id) || Promise.resolve())
+          .then(() => storage.setLbHidden(id, want))
+          .then(refreshHumans)
+          .catch((e) => {
+            // the setting did not reach the database: don't pretend it did
+            console.warn('setLbHidden failed:', e.message)
+            u.lbHidden = prev
+            send(ws, { type: 'orderError', error: 'Gagal menyimpan pengaturan leaderboard — coba lagi' })
+            echo()
+            broadcast({ type: 'lb', lb: buildLeaderboard() })
+          })
+        lbWrites.set(id, tail)
       } else if (m.type === 'gridStart') {
         const r = hub.startGrid(id, sym, m)
         if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
