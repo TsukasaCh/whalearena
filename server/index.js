@@ -136,7 +136,8 @@ wss.on('connection', async (ws, req) => {
     let m
     try { m = JSON.parse(raw) } catch { return }
     const role = auth.role
-    const sym = m.symbol || client.symbol
+    // only a known base symbol is accepted from the client (never a venue key or a non-string)
+    const sym = typeof m.symbol === 'string' && hub.hasSymbol(m.symbol) ? m.symbol : client.symbol
 
     if (m.type === 'sub') {
       if (!hub.hasSymbol(m.symbol)) return
@@ -302,7 +303,7 @@ setInterval(() => {
   }
   hub.gridUpdates = []
   // keep a running algo's benchmark (market VWAP) fresh between slices
-  if (frame % 8 === 0) for (const c of clients) if (c.user.role === 'trader' && hub.hasAlgos(c.user.id)) send(c.ws, meMsg(c.user.id))
+  if (frame % 8 === 0) for (const c of clients) if (c.user.role === 'trader' && (hub.hasAlgos(c.user.id) || hub.hasGrids(c.user.id))) send(c.ws, meMsg(c.user.id))
   flushDirty()
   // periodic checkpoint of open books (trailing-stop anchors move without events)
   if (frame % 40 === 0) for (const uid of hub.activeUserIds()) persist(uid)

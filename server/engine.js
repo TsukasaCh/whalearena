@@ -67,6 +67,13 @@ export class MarketHub {
   vkey(symbol, mode) { return mode === 'spot' ? symbol + ':spot' : symbol }
   market(symbol, mode = 'perp') { return this.markets.get(this.vkey(symbol, mode)) }
   marketByKey(key) { return this.markets.get(key) }
+  // the FUTURES market for a base symbol — and nothing else. Futures order
+  // actions go through this so a crafted symbol like "BTC:spot" can't point
+  // them at a spot book (whose orders have no margin / leverage).
+  perp(symbol) {
+    const m = typeof symbol === 'string' ? this.markets.get(symbol) : null
+    return m && m.isPerp ? m : null
+  }
   symbols() { return [...SYMBOLS] } // base symbols
   venueKeys() { return [...this.markets.keys()] }
   hasSymbol(symbol) { return this.markets.has(this.vkey(symbol, 'perp')) }
@@ -264,7 +271,7 @@ export class MarketHub {
   // ── order actions (symbol-scoped) ─────────────────────────────────────────
   openPosition(id, symbol, { side, leverage, margin, sl, tp }) {
     const u = this.users.get(id)
-    const m = this.markets.get(symbol)
+    const m = this.perp(symbol)
     if (!u || !m) return { ok: false, error: 'No session' }
     leverage = clamp(Math.round(+leverage || 1), 1, 100)
     margin = +margin
@@ -315,7 +322,7 @@ export class MarketHub {
 
   closePosition(id, symbol) {
     const u = this.users.get(id)
-    const m = this.markets.get(symbol)
+    const m = this.perp(symbol)
     if (!u || !m) return { ok: false }
     const book = m.books.get(id)
     if (!book || !book.position) return { ok: false }
@@ -571,7 +578,7 @@ export class MarketHub {
 
   placeLimit(id, symbol, { side, leverage, margin, price, sl, tp, visible }) {
     const u = this.users.get(id)
-    const m = this.markets.get(symbol)
+    const m = this.perp(symbol)
     if (!u || !m) return { ok: false, error: 'No session' }
     const book = m.book(id)
     const committed = book.position ? book.position.side : (book.pendingOrders[0] ? book.pendingOrders[0].side : null)
@@ -606,7 +613,7 @@ export class MarketHub {
 
   cancelLimit(id, symbol, orderId) {
     const u = this.users.get(id)
-    const m = this.markets.get(symbol)
+    const m = this.perp(symbol)
     if (!u || !m) return { ok: false }
     const book = m.books.get(id)
     if (!book || !book.pendingOrders.length) return { ok: false }
@@ -625,7 +632,7 @@ export class MarketHub {
   }
 
   moveLimit(id, symbol, orderId, price) {
-    const m = this.markets.get(symbol)
+    const m = this.perp(symbol)
     const u = this.users.get(id)
     if (!m || !u) return { ok: false }
     const book = m.books.get(id)
@@ -656,7 +663,7 @@ export class MarketHub {
   // finishes, is cancelled, or is stopped by the position closing.
   placeAlgo(id, symbol, { algo, side, leverage, margin, duration, slices, sl, tp }) {
     const u = this.users.get(id)
-    const m = this.markets.get(symbol)
+    const m = this.perp(symbol)
     if (!u || !m) return { ok: false, error: 'No session' }
     if (!m.isPerp) return { ok: false, error: 'TWAP/VWAP hanya tersedia di Futures' }
     const type = algo === 'twap' || algo === 'vwap' ? algo : null
@@ -962,7 +969,7 @@ export class MarketHub {
   }
 
   modify(id, symbol, { sl, tp, trailPct }) {
-    const m = this.markets.get(symbol)
+    const m = this.perp(symbol)
     if (!m) return { ok: false }
     const book = m.books.get(id)
     if (!book || !book.position) return { ok: false }
@@ -992,7 +999,7 @@ export class MarketHub {
   }
 
   mm(symbol, cmd, payload = {}) {
-    const m = this.markets.get(symbol)
+    const m = this.perp(symbol)
     if (!m) return
     // a reset wipes every book — un-deployed TWAP/VWAP reservations are plain
     // cash, so refund them first (only the hub owns balances)
@@ -1053,7 +1060,7 @@ export class MarketHub {
 
   startGrid(id, symbol, { lower, upper, grids, invest }) {
     const u = this.users.get(id)
-    const m = this.market(symbol, 'spot')
+    const m = typeof symbol === 'string' ? this.market(symbol, 'spot') : null
     if (!u || !m) return { ok: false, error: 'No session' }
     lower = +lower; upper = +upper; invest = Math.floor((+invest || 0) * 100) / 100
     grids = Math.round(+grids)
@@ -1177,13 +1184,30 @@ export class MarketHub {
         g.flips = []
         if (!m) continue
         const book = m.book(u.id)
-        for (const f of flips) {
-          if (f.level < 0 || f.level > g.grids) continue
-          // one order per level: skip if that level is somehow already occupied
-          if (book.pendingOrders.some((o) => o.grid === g.id && o.level === f.level)) continue
-          this.gridPlace(m, book, g, f.level, f.side, f.qty)
+        // Both neighbours of the empty slot can fill in one tick (a buy below it
+        // and a sell above it). Their mirrors would collide on the same level, so
+        // such a pair simply cancels out: re-arm the two original orders instead.
+        const buys = flips.filter((f) => f.side === 'long').sort((a, b) => b.level - a.level)
+        const sells = flips.filter((f) => f.side === 'short').sort((a, b) => a.level - b.level)
+        const pairs = Math.min(buys.length, sells.length)
+        const todo = []
+        for (let i = 0; i < pairs; i++) {
+          todo.push({ level: buys[i].level + 1, side: 'short', qty: buys[i].qty }) // the sell that had filled
+          todo.push({ level: sells[i].level - 1, side: 'long', qty: sells[i].qty }) // the buy that had filled
         }
-        any = true
+        todo.push(...buys.slice(pairs), ...sells.slice(pairs))
+        for (const f of todo) {
+          if (f.level < 0 || f.level > g.grids) continue
+          const px = m.r(this.gridLevel(g, f.level))
+          // keep the order queued (its funds stay idle in the bot) while its level
+          // is still occupied, or while it would be marketable — a mirror resting on
+          // the wrong side of the price would just be executed at a worse price
+          const occupied = book.pendingOrders.some((o) => o.grid === g.id && o.level === f.level)
+          const marketable = f.side === 'long' ? px >= m.price : px <= m.price
+          if (occupied || marketable) { g.flips.push(f); continue }
+          if (this.gridPlace(m, book, g, f.level, f.side, f.qty)) any = true
+        }
+        m.dropIfEmpty(u.id)
       }
       if (any) { this.dirty.add(u.id); touched.push(u.id) }
     }
@@ -1229,6 +1253,7 @@ export class MarketHub {
     }
   }
 
+  hasGrids(id) { return !!this.users.get(id)?.grids?.length }
   // does this user have a TWAP/VWAP running anywhere? (drives periodic refreshes)
   hasAlgos(id) {
     for (const m of this.markets.values()) { const b = m.books.get(id); if (b && b.algos && b.algos.length) return true }

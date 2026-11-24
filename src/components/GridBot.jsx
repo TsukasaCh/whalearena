@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSim } from '../store/useSimStore'
 import { TAKER_FEE, MAKER_FEE } from '../lib/trading'
 import { usd, fmt, fmtPrice, fmtQty, pct, signedUsd } from '../lib/format'
@@ -35,19 +35,24 @@ export function GridForm() {
     setLower(roundDp(price * (1 - p), dp))
     setUpper(roundDp(price * (1 + p), dp))
   }
-  // a sensible default range around the current price, once per market
+  // a sensible default range around the current price — seeded ONCE per market,
+  // so clearing the fields to type a new range never gets them refilled
+  const seeded = useRef(null)
   useEffect(() => {
     setLower(''); setUpper(''); setError('')
+    seeded.current = null
   }, [symbol])
   useEffect(() => {
-    if (price && lower === '' && upper === '') setRange(0.03)
-  }, [price, lower, upper]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!price || seeded.current === symbol) return
+    seeded.current = symbol
+    setRange(0.03)
+  }, [price, symbol]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const lo = Number(lower), hi = Number(upper), n = Math.round(Number(grids) || 0), inv = Number(invest) || 0
   const plan = useMemo(() => {
-    if (!(lo > 0) || !(hi > lo) || !(n >= GRID_MIN) || !price) return null
+    if (!(lo > 0) || !(hi > lo) || !(n >= GRID_MIN) || n > GRID_MAX || !price) return null
     const step = (hi - lo) / n
-    const level = (i) => lo + step * i
+    const level = (i) => roundDp(lo + ((hi - lo) * i) / n, dp) // tick-rounded, exactly like the server
     let k = -1
     for (let i = 0; i <= n; i++) if (level(i) < price) k = i
     const inRange = price > lo && price < hi && k >= 0 && k < n
@@ -58,7 +63,7 @@ export function GridForm() {
     // net profit of one round trip as a % of the money in it, at the cheapest and dearest grid
     const net = (buy) => ((step - (2 * buy + step) * MAKER_FEE) / buy) * 100
     return { step, k, inRange, buys: k + 1, sells, qty, pctLo: net(hi - step), pctHi: net(lo) }
-  }, [lo, hi, n, inv, price])
+  }, [lo, hi, n, inv, price, dp])
 
   const submit = () => {
     setError('')
