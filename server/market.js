@@ -7,6 +7,13 @@ import {
 // Round to a market's own precision (BTC → cents, DOGE → 6dp, PEPE → 10dp).
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
 const nowBucket = () => Math.floor(Date.now() / 1000 / BASE_PERIOD) * BASE_PERIOD
+// standard normal (Box–Muller)
+const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random())
+// per-minute log-return σ of generated history for a vol-1 market (BTC ≈ 0.048%)
+const HIST_SIGMA_1M = 0.00048
+// saved-market format. Bump it when the history generator changes: older saves
+// keep their price and stats but get their candle history regenerated.
+const HIST_VERSION = 3
 
 // --- order-flow price-impact model (see the original single-market notes) ---
 const AMBIENT_FLOW = 0.28
@@ -130,6 +137,7 @@ export class Market {
     this.baseAsset = cfg.base
     this.dp = cfg.dp
     this.volScale = cfg.vol || 1
+    this.supply = cfg.supply || 0 // circulating coins (for market cap)
     this.seedPrice = cfg.price
     this.kind = cfg.kind || 'perp'
     this.isPerp = this.kind === 'perp'
@@ -190,7 +198,7 @@ export class Market {
   serialize() {
     const pack = (c) => [c.time, c.open, c.high, c.low, c.close, c.volume]
     return {
-      v: 1,
+      v: HIST_VERSION,
       price: this.price,
       anchor: this.anchor,
       seedPrice: this.seedPrice,
@@ -204,7 +212,23 @@ export class Market {
   }
 
   restore(st) {
-    if (!st || st.v !== 1 || !(st.price > 0) || !st.baseCurrent || !Array.isArray(st.base) || !st.base.length) return false
+    if (!st || !(st.v >= 1 && st.v <= HIST_VERSION) || !(st.price > 0) || !st.baseCurrent || !Array.isArray(st.base) || !st.base.length) return false
+    if (st.v !== HIST_VERSION) {
+      // old save: its generated candles hugged one level on every timeframe.
+      // Keep the price (open positions resume exactly where they were) and the
+      // market stats, but rebuild the chart history so it ends on that price.
+      this.freshHistory(st.price)
+      this.anchor = st.anchor > 0 ? st.anchor : st.price
+      if (st.seedPrice > 0) this.seedPrice = st.seedPrice
+      this.harvested = st.harvested || 0
+      this.liquidatedTotal = st.liquidatedTotal || 0
+      this.feesCollected = st.feesCollected || 0
+      this.bots = []
+      for (let i = 0; i < INITIAL_BOTS; i++) this.bots.push(this.makeBot(this.price, 0.5))
+      this.initBook()
+      this.epoch = (this.epoch || 0) + 1
+      return true
+    }
     const unpack = (a) => ({ time: a[0], open: a[1], high: a[2], low: a[3], close: a[4], volume: a[5] })
     this.price = st.price
     this.anchor = st.anchor > 0 ? st.anchor : st.price
@@ -281,35 +305,6 @@ export class Market {
     return true
   }
 
-  // `count` 1m bars from `t0` that start and finish at `price` (random walk with
-  // its drift removed — a Brownian bridge), shaped like genBaseHistory's bars.
-  bridge(count, t0, price) {
-    const hv = HIST_VOL * this.volScale
-    const walk = []
-    let c = 0
-    for (let i = 0; i < count; i++) {
-      const sub = []
-      for (let k = 0; k < 6; k++) { c += (Math.random() - 0.5) * hv; sub.push(c) }
-      walk.push(sub)
-    }
-    const drift = c / count
-    const out = []
-    let prev = price
-    for (let i = 0; i < count; i++) {
-      const pts = walk[i].map((x, k) => price * Math.exp(x - drift * (i + (k + 1) / 6)))
-      const open = prev
-      const close = pts[pts.length - 1]
-      const hi = Math.max(open, ...pts)
-      const lo = Math.min(open, ...pts)
-      out.push({
-        time: t0 + i * BASE_PERIOD,
-        open: this.r(open), high: this.r(hi), low: this.r(lo), close: this.r(close),
-        volume: Math.round((((hi - lo) / (open || 1)) * 3000 + 6 + Math.random() * 10) * (DEPTH_REF / open) * 100) / 100,
-      })
-      prev = close
-    }
-    return out
-  }
 
   // -- funding --------------------------------------------------------------
   // predicted rate for the next settlement, from the crowd's OI imbalance
@@ -388,71 +383,99 @@ export class Market {
     return { id: 'b' + Math.random().toString(36).slice(2, 9), name: nickname(), side, leverage, margin, entry: this.r(entry), qty, liq, sl }
   }
 
-  genBaseHistory(count, start) {
-    const base = []
-    let price = start
-    let anchor = start
-    let t = nowBucket() - count * BASE_PERIOD
-    const hv = HIST_VOL * this.volScale
+  // ── synthetic history ──────────────────────────────────────────────────────
+  // A log random walk with volatility clustering (quiet stretches and bursts) and
+  // short-lived trends, sampled in a few sub-steps per bar for natural wicks.
+  // Because it is a walk (not noise around a fixed level), the price range of a
+  // window grows with its length — so 60 candles of 15m span visibly more than
+  // 60 candles of 1m, like a real market. Returns bars in LOG space from 0.
+  synthPath(count, sigma, pull = 0) {
+    const out = []
+    let x = 0
+    let lv = 0 // log of the volatility regime (slow mean-reverting)
+    let tr = 0 // persistent drift per bar (fades over ~30 bars)
     for (let i = 0; i < count; i++) {
-      anchor = anchor * (1 + (Math.random() - 0.5) * 0.0012)
-      const open = price
-      let c = open, hi = open, lo = open
-      for (let s = 0; s < 6; s++) {
-        const revert = ((anchor - c) / anchor) * 0.02
-        c = c * (1 + (Math.random() - 0.5) * hv + revert)
-        if (c > hi) hi = c
-        if (c < lo) lo = c
+      lv = lv * 0.985 + gauss() * 0.09
+      tr = tr * 0.97 + gauss() * sigma * 0.012
+      // occasional impulse bar (news candle)
+      const s = sigma * Math.exp(lv - 0.135) * (Math.random() < 0.012 ? 2.6 : 1)
+      const open = x
+      let hi = x, lo = x
+      // `pull` = faint long-horizon mean reversion so multi-day ranges stay plausible
+      const back = -x * pull
+      for (let k = 0; k < 5; k++) {
+        x += (tr + back) / 5 + gauss() * s * 0.4472 // 1/√5
+        if (x > hi) hi = x
+        if (x < lo) lo = x
       }
-      const range = (hi - lo) / (open || 1)
+      out.push({ open, high: hi, low: lo, close: x })
+    }
+    return out
+  }
+  // synthetic volume for a bar of `range` (fraction of price) lasting `mins` minutes,
+  // on the same scale as the live tick flow so history and live bars match
+  synthVolume(range, mins, price) {
+    return Math.round((range * (20000 / Math.sqrt(mins)) + 10 + Math.random() * 14) * mins * (DEPTH_REF / price) * 100) / 100
+  }
+
+  // `count` 1m bars from `t0` that start and finish at `price` (the walk with its
+  // drift removed — a Brownian bridge), used to fill the gap after a restart.
+  bridge(count, t0, price) {
+    const path = this.synthPath(count, HIST_SIGMA_1M * this.volScale)
+    const end = path.length ? path[path.length - 1].close : 0
+    const out = []
+    for (let i = 0; i < count; i++) {
+      const b = path[i]
+      const d0 = (end * i) / count, d1 = (end * (i + 1)) / count // linear drift to subtract
+      const open = price * Math.exp(b.open - d0)
+      const close = price * Math.exp(b.close - d1)
+      const hi = Math.max(open, close, price * Math.exp(b.high - d1))
+      const lo = Math.min(open, close, price * Math.exp(b.low - d1))
+      out.push({
+        time: t0 + i * BASE_PERIOD,
+        open: this.r(open), high: this.r(hi), low: this.r(lo), close: this.r(close),
+        volume: this.synthVolume((hi - lo) / (open || 1), 1, open),
+      })
+    }
+    return out
+  }
+  genBaseHistory(count, start) {
+    const path = this.synthPath(count, HIST_SIGMA_1M * this.volScale, 0.00015)
+    const base = []
+    let t = nowBucket() - count * BASE_PERIOD
+    let price = start
+    for (const b of path) {
+      const open = start * Math.exp(b.open)
+      const hi = start * Math.exp(b.high)
+      const lo = start * Math.exp(b.low)
+      price = start * Math.exp(b.close)
       base.push({
         time: t,
-        open: this.r(open),
-        high: this.r(hi),
-        low: this.r(lo),
-        close: this.r(c),
-        volume: Math.round((range * 3000 + 6 + Math.random() * 10) * (DEPTH_REF / open) * 100) / 100,
+        open: this.r(open), high: this.r(hi), low: this.r(lo), close: this.r(price),
+        volume: this.synthVolume((hi - lo) / (open || 1), 1, open),
       })
-      price = c
       t += BASE_PERIOD
     }
     return { base, price: this.r(price), nextTime: t }
   }
-
-  // ~3 months of hourly bars, random-walked then rescaled so the final close
-  // lands exactly on the live base's first open (seamless stitch, no price jump).
+  // ~3 months of hourly bars from the same walk, rescaled so the final close
+  // equals `endPrice` (contiguous with the live base)
   genDeepHistory(hours, endPrice, base0Time) {
     const endHour = Math.floor(base0Time / 3600) * 3600
     const startHour = endHour - hours * 3600
-    const hv = HIST_VOL * this.volScale * 3.2 // hour bars travel further than 1m bars
-    const raw = []
-    let price = endPrice
-    let anchor = endPrice
-    for (let i = 0; i < hours; i++) {
-      anchor = anchor * (1 + (Math.random() - 0.5) * 0.006)
-      const open = price
-      let c = open, hi = open, lo = open
-      for (let s = 0; s < 5; s++) {
-        const revert = ((anchor - c) / anchor) * 0.03
-        c = c * (1 + (Math.random() - 0.5) * hv + revert)
-        if (c > hi) hi = c
-        if (c < lo) lo = c
-      }
-      raw.push({ open, high: hi, low: lo, close: c, range: (hi - lo) / (open || 1) })
-      price = c
-    }
-    // rescale so the last close equals endPrice → contiguous with live base
-    const ratio = raw.length ? endPrice / raw[raw.length - 1].close : 1
+    // an hour is 60 one-minute steps; slightly damped so 3 months stay plausible
+    const path = this.synthPath(hours, HIST_SIGMA_1M * this.volScale * Math.sqrt(60) * 0.65, 0.0008)
+    const end = path.length ? path[path.length - 1].close : 0
     const out = []
     let t = startHour
-    for (const b of raw) {
+    for (const b of path) {
+      const open = endPrice * Math.exp(b.open - end)
+      const hi = endPrice * Math.exp(b.high - end)
+      const lo = endPrice * Math.exp(b.low - end)
       out.push({
         time: t,
-        open: this.r(b.open * ratio),
-        high: this.r(b.high * ratio),
-        low: this.r(b.low * ratio),
-        close: this.r(b.close * ratio),
-        volume: Math.round((b.range * 3000 + 6 + Math.random() * 10) * 60 * (DEPTH_REF / (b.open * ratio))),
+        open: this.r(open), high: this.r(hi), low: this.r(lo), close: this.r(endPrice * Math.exp(b.close - end)),
+        volume: Math.round(this.synthVolume((hi - lo) / (open || 1), 60, open)),
       })
       t += 3600
     }
@@ -970,7 +993,7 @@ export class Market {
   // compact ticker for the markets list / top bar
   ticker() {
     return {
-      symbol: this.symbol, mode: this.kind, name: this.name, base: this.baseAsset, dp: this.dp,
+      symbol: this.symbol, mode: this.kind, name: this.name, base: this.baseAsset, dp: this.dp, supply: this.supply,
       price: this.r(this.price), change: Math.round(this.change24h() * 100) / 100,
       spark: this.spark(),
     }

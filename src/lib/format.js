@@ -8,7 +8,8 @@ export const fmtPrice = (n, dp = 2) =>
 // Compact coin quantity: show enough significant figures for cheap coins.
 export const fmtQty = (n) => {
   const a = Math.abs(n)
-  const d = a >= 1000 ? 2 : a >= 1 ? 3 : a >= 0.01 ? 4 : 2
+  // tiny amounts (0.0016 BTC) need more decimals or they'd read as "0.00"
+  const d = a >= 1000 ? 2 : a >= 1 ? 3 : a >= 0.01 ? 4 : a > 0 ? 6 : 2
   if (a >= 1e12) return (n / 1e12).toFixed(2) + 'T'
   if (a >= 1e9) return (n / 1e9).toFixed(2) + 'B'
   if (a >= 1e6) return (n / 1e6).toFixed(2) + 'M'
@@ -23,6 +24,14 @@ export const pct = (n, d = 2) => (n >= 0 ? '+' : '') + fmt(n, d) + '%'
 
 // 950 → "950", 12_345 → "12.3K", 12_000_000 → "12.0M", 3.4e9 → "3.40B", 5e12 → "5.00T"
 const UNITS = [[1e12, 'T', 2], [1e9, 'B', 2], [1e6, 'M', 1], [1e3, 'K', 1]]
+// Market cap of a ticker = spot price × circulating supply (null when unknown).
+export const marketCap = (m) => {
+  const px = m?.spot ?? m?.price
+  return m?.supply > 0 && px > 0 ? px * m.supply : null
+}
+// "$1.26T" / "$84.3B" / "$500.0M"
+export const usdCompact = (n) => (n == null ? '—' : '$' + compact(n))
+
 export const compact = (n) => {
   const a = Math.abs(n)
   for (const [v, u, d] of UNITS) if (a >= v) return (n / v).toFixed(d) + u

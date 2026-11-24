@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSim, TIMEFRAMES } from '../store/useSimStore'
 import { useAuth } from '../store/useAuth'
 import { navigate, ROUTES } from '../router'
-import { usd, fmtPrice, pct, compact } from '../lib/format'
+import { usd, fmtPrice, pct, compact, marketCap, usdCompact } from '../lib/format'
 import { CoinIcon } from './ui'
 
 const NAV = [
@@ -116,11 +116,14 @@ export function TickerBar({ isMM, mode = 'perp' }) {
 
   const basis = meta?.spot && meta?.price ? ((meta.price - meta.spot) / meta.spot) * 100 : null
   const oi = (crowd.longOI || 0) + (crowd.shortOI || 0)
+  // spot fundamentals: market cap = spot price × circulating supply, ranked among listed tokens
+  const mcap = marketCap(meta)
+  const rank = mcap ? symbols.filter((s) => (marketCap(s) || 0) > mcap).length + 1 : null
   const longPct = oi > 0 ? (crowd.longOI / oi) * 100 : null
 
   return (
     <div className="mx-1 flex shrink-0 items-center gap-5 overflow-x-auto rounded-lg bg-panel px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <MarketPicker symbol={symbol} symbols={symbols} onPick={setSymbol} badge={isSpot ? 'Spot' : 'Perp'} />
+      <MarketPicker symbol={symbol} symbols={symbols} onPick={setSymbol} badge={isSpot ? 'Spot' : 'Perp'} showCap={isSpot} />
 
       <div className="shrink-0 leading-tight">
         <div
@@ -145,6 +148,14 @@ export function TickerBar({ isMM, mode = 'perp' }) {
             valueClass={Math.abs(basis) < 0.05 ? 'text-txt' : basis >= 0 ? 'text-up' : 'text-down'}
           />
         )}
+        {isSpot && mcap && (
+          <TickStat
+            label="Market cap"
+            title="Harga spot × suplai beredar"
+            value={<>{usdCompact(mcap)}<span className="text-sub"> · #{rank}</span></>}
+          />
+        )}
+        {isSpot && meta?.supply > 0 && <TickStat label="Circulating supply" value={`${compact(meta.supply)} ${meta.base || symbol}`} />}
         {!isSpot && <FundingStat />}
         {!isSpot && oi > 0 && <TickStat label="Open interest" value={compact(oi)} />}
         {!isSpot && longPct != null && (
@@ -225,7 +236,7 @@ export function TimeframeTabs() {
 }
 
 // Pair selector (symbol + a searchable popover list of all pairs).
-function MarketPicker({ symbol, symbols, onPick, badge }) {
+function MarketPicker({ symbol, symbols, onPick, badge, showCap = false }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef(null)
@@ -271,7 +282,7 @@ function MarketPicker({ symbol, symbols, onPick, badge }) {
             </div>
           </div>
           <div className="flex justify-between px-4 pb-1 text-[11px] text-sub">
-            <span>Name</span>
+            <span>{showCap ? 'Name / Market cap' : 'Name'}</span>
             <span>Last price / Change</span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto pb-2">
@@ -287,11 +298,11 @@ function MarketPicker({ symbol, symbols, onPick, badge }) {
                   <CoinIcon symbol={s.symbol} size={24} />
                   <span className="flex min-w-0 flex-col leading-tight">
                     <span className="text-[13px] font-semibold text-txt">{s.symbol}<span className="font-normal text-sub">USDT</span></span>
-                    <span className="truncate text-[11px] text-sub">{s.name}</span>
+                    <span className="truncate text-[11px] text-sub">{showCap && marketCap(s) ? `MCap ${usdCompact(marketCap(s))}` : s.name}</span>
                   </span>
                 </span>
                 <span className="flex shrink-0 flex-col items-end leading-tight">
-                  <span className="font-mono text-[13px] text-txt">{fmtPrice(s.price, s.dp)}</span>
+                  <span className="font-mono text-[13px] text-txt">{fmtPrice(showCap ? s.spot ?? s.price : s.price, s.dp)}</span>
                   <span className={`font-mono text-[11px] ${s.change >= 0 ? 'text-up' : 'text-down'}`}>{pct(s.change)}</span>
                 </span>
               </button>

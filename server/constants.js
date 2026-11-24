@@ -66,21 +66,22 @@ export const YEAR_MS = 365 * 24 * 60 * 60 * 1000
 // ── Tradable markets ────────────────────────────────────────────────────────
 // Each market runs its own price sim, order book, bots and history. `price` is
 // the seed spot; `vol` scales that market's live/hist volatility (alts chop more
-// than BTC); `dp` is the price display precision; `base` is the coin ticker.
+// than BTC); `dp` is the price display precision; `base` is the coin ticker;
+// `supply` is the circulating coin supply (market cap = spot price × supply).
 export const MARKETS = [
-  { symbol: 'BTC', name: 'Bitcoin',   base: 'BTC',  price: 64000,   vol: 1.0, dp: 2 },
-  { symbol: 'ETH', name: 'Ethereum',  base: 'ETH',  price: 3200,    vol: 1.15, dp: 2 },
-  { symbol: 'SOL', name: 'Solana',    base: 'SOL',  price: 165,     vol: 1.5, dp: 3 },
-  { symbol: 'BNB', name: 'BNB',       base: 'BNB',  price: 590,     vol: 1.1, dp: 2 },
-  { symbol: 'XRP', name: 'XRP',       base: 'XRP',  price: 0.58,    vol: 1.4, dp: 5 },
-  { symbol: 'DOGE', name: 'Dogecoin', base: 'DOGE', price: 0.135,   vol: 1.8, dp: 6 },
-  { symbol: 'ADA', name: 'Cardano',   base: 'ADA',  price: 0.44,    vol: 1.5, dp: 5 },
-  { symbol: 'AVAX', name: 'Avalanche',base: 'AVAX', price: 27.5,    vol: 1.6, dp: 4 },
-  { symbol: 'LINK', name: 'Chainlink',base: 'LINK', price: 14.2,    vol: 1.5, dp: 4 },
-  { symbol: 'TRX', name: 'TRON',      base: 'TRX',  price: 0.145,   vol: 1.2, dp: 6 },
-  { symbol: 'TON', name: 'Toncoin',   base: 'TON',  price: 5.4,     vol: 1.5, dp: 4 },
-  { symbol: 'PEPE', name: 'Pepe',     base: 'PEPE', price: 0.0000092, vol: 2.2, dp: 10 },
-  { symbol: 'RCLD', name: 'RCLD',     base: 'RCLD', price: 0.5,       vol: 2.0, dp: 5 },
+  { symbol: 'BTC', name: 'Bitcoin',   base: 'BTC',  price: 64000,   vol: 1.0, dp: 2, supply: 19.7e6 },
+  { symbol: 'ETH', name: 'Ethereum',  base: 'ETH',  price: 3200,    vol: 1.15, dp: 2, supply: 120.2e6 },
+  { symbol: 'SOL', name: 'Solana',    base: 'SOL',  price: 165,     vol: 1.5, dp: 3, supply: 465e6 },
+  { symbol: 'BNB', name: 'BNB',       base: 'BNB',  price: 590,     vol: 1.1, dp: 2, supply: 147.6e6 },
+  { symbol: 'XRP', name: 'XRP',       base: 'XRP',  price: 0.58,    vol: 1.4, dp: 5, supply: 56e9 },
+  { symbol: 'DOGE', name: 'Dogecoin', base: 'DOGE', price: 0.135,   vol: 1.8, dp: 6, supply: 145e9 },
+  { symbol: 'ADA', name: 'Cardano',   base: 'ADA',  price: 0.44,    vol: 1.5, dp: 5, supply: 35.6e9 },
+  { symbol: 'AVAX', name: 'Avalanche',base: 'AVAX', price: 27.5,    vol: 1.6, dp: 4, supply: 395e6 },
+  { symbol: 'LINK', name: 'Chainlink',base: 'LINK', price: 14.2,    vol: 1.5, dp: 4, supply: 587e6 },
+  { symbol: 'TRX', name: 'TRON',      base: 'TRX',  price: 0.145,   vol: 1.2, dp: 6, supply: 87e9 },
+  { symbol: 'TON', name: 'Toncoin',   base: 'TON',  price: 5.4,     vol: 1.5, dp: 4, supply: 2.5e9 },
+  { symbol: 'PEPE', name: 'Pepe',     base: 'PEPE', price: 0.0000092, vol: 2.2, dp: 10, supply: 420.69e12 },
+  { symbol: 'RCLD', name: 'RCLD',     base: 'RCLD', price: 0.5,       vol: 2.0, dp: 5, supply: 1e9 },
 ]
 export const SYMBOLS = MARKETS.map((m) => m.symbol)
 export const DEFAULT_SYMBOL = 'BTC'

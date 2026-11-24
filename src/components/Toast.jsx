@@ -116,7 +116,10 @@ export default function Toast() {
           title={title}
           sub={
             <>
-              {sym}{toast.side?.toUpperCase()} · {usd(toast.filledMargin || 0)} / {usd(toast.margin || 0)} margin
+              {sym}{toast.spot ? 'SPOT ' : ''}{toast.side?.toUpperCase()} ·{' '}
+              {toast.spot && toast.side === 'sell'
+                ? <>{fmtQty(toast.filledMargin || 0)} / {fmtQty(toast.margin || 0)} sold</>
+                : <>{usd(toast.filledMargin || 0)} / {usd(toast.margin || 0)}{toast.spot ? '' : ' margin'}</>}
               {toast.avg ? <> · avg {fmtPrice(toast.avg, dp)}</> : null}
               {toast.status === 'failed' && toast.reason ? <> · {toast.reason}</> : null}
             </>

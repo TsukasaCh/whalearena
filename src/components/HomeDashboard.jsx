@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { useSim, accruedStake, STAKE_APY } from '../store/useSimStore'
 import { useAuth } from '../store/useAuth'
 import { unrealizedPnl, roe } from '../lib/trading'
-import { usd, fmt, fmtPrice, fmtQty, pct, signedUsd } from '../lib/format'
+import { usd, fmt, fmtPrice, fmtQty, pct, signedUsd, marketCap, usdCompact } from '../lib/format'
 import ShareCard from './ShareCard'
 import { CoinIcon } from './ui'
+import { algoView } from './AlgoOrders'
 
 const STARTING = 10000
 
@@ -35,7 +36,7 @@ export default function HomeDashboard({ onEnter }) {
   for (const [sym, b] of Object.entries(books || {})) {
     if (b.position) positions.push({ symbol: sym, ...b.position })
     for (const o of b.pendingOrders || []) pending.push({ symbol: sym, ...o })
-    for (const a of b.algos || []) algos.push({ symbol: sym, ...a })
+    for (const a of b.algos || []) algos.push({ ...a, spot: !!a.spot || sym.endsWith(':spot'), symbol: sym.replace(':spot', '') })
   }
   // spot holdings across every market
   const holdings = []
@@ -45,6 +46,13 @@ export default function HomeDashboard({ onEnter }) {
     holdings.push({ symbol: sym, qty: h.qty, cost: h.cost, avg: h.qty ? h.cost / h.qty : 0, price, value: h.qty * price, pnl: h.qty * price - h.cost })
   }
   const spotValue = holdings.reduce((s, h) => s + h.value, 0)
+  // value parked in running SPOT algo orders: coins waiting to be sold, or USDT waiting to buy
+  const spotAlgos = algos.filter((a) => a.spot)
+  const spotAlgoValue = spotAlgos.reduce((s, a) => {
+    const mk = metaOf(a.symbol)
+    return s + (a.side === 'sell' ? (a.remQty || 0) * (mk.spot ?? mk.price ?? 0) : a.reserved || 0)
+  }, 0)
+  const perpAlgoCount = algos.length - spotAlgos.length
   // staked coins across every market (accrued to now)
   const stakes = []
   for (const [sym, st] of Object.entries(staked || {})) {
@@ -69,7 +77,7 @@ export default function HomeDashboard({ onEnter }) {
   const shareTrade = (h) =>
     setShare({ mode: 'position', symbol: h.symbol, side: h.side, leverage: h.leverage, entry: h.entry, exit: h.exit, dp: metaOf(h.symbol).dp ?? 2, roe: roe(h.pnl, h.margin), pnl: h.pnl, closed: true })
 
-  const futuresValue = equity - balance - spotValue - stakedValue // margin + uPnL + resting limits
+  const futuresValue = equity - balance - spotValue - spotAlgoValue - stakedValue // margin + uPnL + resting limits + futures algos
   const totalPct = (totalPnl / STARTING) * 100
   const sideBadge = (long) => `rounded px-1.5 py-0.5 text-[11px] font-semibold ${long ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`
 
@@ -117,8 +125,8 @@ export default function HomeDashboard({ onEnter }) {
               <h2 className="mb-4 text-lg font-semibold text-txt">Portfolio</h2>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <Tile label="Available" value={usd(balance)} hint="Free balance" />
-                <Tile label="Futures" value={usd(futuresValue)} hint={`${positions.length} open · ${pending.length} resting${algos.length ? ` · ${algos.length} algo` : ''}`} onClick={() => onEnter('perp')} />
-                <Tile label="Spot" value={usd(spotValue)} hint={`${holdings.length} coin${holdings.length === 1 ? '' : 's'}`} onClick={() => onEnter('spot')} />
+                <Tile label="Futures" value={usd(futuresValue)} hint={`${positions.length} open · ${pending.length} resting${perpAlgoCount ? ` · ${perpAlgoCount} algo` : ''}`} onClick={() => onEnter('perp')} />
+                <Tile label="Spot" value={usd(spotValue + spotAlgoValue)} hint={`${holdings.length} coin${holdings.length === 1 ? '' : 's'}${spotAlgos.length ? ` · ${spotAlgos.length} algo` : ''}`} onClick={() => onEnter('spot')} />
                 <Tile label="Earn" value={usd(stakedValue)} hint={`${(STAKE_APY * 100).toFixed(0)}% APY staking`} onClick={() => onEnter('spot')} />
               </div>
             </div>
@@ -222,19 +230,22 @@ export default function HomeDashboard({ onEnter }) {
             {algos.length > 0 && (
               <Panel title="Algo orders" right={`${algos.length} running`}>
                 <div className="divide-y divide-border">
-                  {algos.map((a) => (
-                    <div key={a.symbol + a.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5 text-xs">
-                      <button onClick={() => openMarket(a.symbol)} className="flex items-center gap-2 text-left">
-                        <span className="text-sm font-semibold text-txt">{a.symbol}USDT</span>
-                        <span className="rounded bg-panel2 px-1.5 py-0.5 text-[11px] font-semibold text-txt">{a.type.toUpperCase()}</span>
-                        <span className={sideBadge(a.side === 'long')}>{a.side === 'long' ? 'Long' : 'Short'} {a.leverage}x</span>
-                      </button>
-                      <span className="font-mono text-sub">
-                        <span className="text-txt">{usd(a.filledMargin)}</span> / {usd(a.margin)} · slice {Math.min(a.done, a.slices)}/{a.slices}
-                      </span>
-                      <button onClick={() => cancelAlgo(a.id, a.symbol)} className="btn btn-outline btn-sm hover:!border-down hover:text-down">Cancel</button>
-                    </div>
-                  ))}
+                  {algos.map((a) => {
+                    const v = algoView(a, metaOf(a.symbol).base ?? a.symbol)
+                    return (
+                      <div key={a.symbol + a.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5 text-xs">
+                        <button onClick={() => openMarket(a.symbol, v.spot ? 'spot' : 'perp')} className="flex items-center gap-2 text-left">
+                          <span className="text-sm font-semibold text-txt">{a.symbol}{v.spot ? '' : 'USDT'}</span>
+                          <span className="rounded bg-panel2 px-1.5 py-0.5 text-[11px] font-semibold text-txt">{v.spot ? 'Spot ' : ''}{a.type.toUpperCase()}</span>
+                          <span className={sideBadge(v.buy)}>{v.label}</span>
+                        </button>
+                        <span className="font-mono text-sub">
+                          {v.progress} · slice {Math.min(a.done, a.slices)}/{a.slices}
+                        </span>
+                        <button onClick={() => cancelAlgo(a.id, a.symbol, v.spot)} className="btn btn-outline btn-sm hover:!border-down hover:text-down">Cancel</button>
+                      </div>
+                    )
+                  })}
                 </div>
               </Panel>
             )}
@@ -266,11 +277,12 @@ export default function HomeDashboard({ onEnter }) {
             {/* markets */}
             <Panel title="Markets" right={`${symbols.length} pairs`}>
               <div className="-mx-2">
-                <div className="grid grid-cols-[minmax(0,1fr)_auto_7rem] items-center gap-3 px-2 pb-1 text-xs text-sub sm:grid-cols-[minmax(0,1.4fr)_5rem_7rem_5rem_auto]">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_7rem] items-center gap-3 px-2 pb-1 text-xs text-sub sm:grid-cols-[minmax(0,1.4fr)_5rem_7rem_5rem_auto] md:grid-cols-[minmax(0,1.4fr)_5rem_7rem_5rem_5.5rem_auto]">
                   <span>Name</span>
                   <span className="hidden sm:block" />
                   <span className="text-right">Last price</span>
                   <span className="hidden text-right sm:block">Change</span>
+                  <span className="hidden text-right md:block" title="Harga spot × suplai beredar">Market cap</span>
                   <span className="hidden w-[68px] sm:block" />
                 </div>
                 {symbols.map((m) => {
@@ -282,13 +294,13 @@ export default function HomeDashboard({ onEnter }) {
                       tabIndex={0}
                       onClick={() => openMarket(m.symbol)}
                       onKeyDown={(e) => { if (e.key === 'Enter') openMarket(m.symbol) }}
-                      className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto_7rem] items-center gap-3 rounded-xl px-2 py-2.5 hover:bg-panel2 sm:grid-cols-[minmax(0,1.4fr)_5rem_7rem_5rem_auto]"
+                      className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto_7rem] items-center gap-3 rounded-xl px-2 py-2.5 hover:bg-panel2 sm:grid-cols-[minmax(0,1.4fr)_5rem_7rem_5rem_auto] md:grid-cols-[minmax(0,1.4fr)_5rem_7rem_5rem_5.5rem_auto]"
                     >
                       <span className="flex min-w-0 items-center gap-3">
                         <CoinIcon symbol={m.symbol} size={32} />
                         <span className="min-w-0 leading-tight">
                           <span className="block truncate text-sm font-semibold text-txt">{m.symbol}<span className="font-normal text-sub">/USDT</span></span>
-                          <span className="block truncate text-xs text-sub">{m.name}</span>
+                          <span className="block truncate text-xs text-sub">{m.name}<span className="md:hidden"> · {usdCompact(marketCap(m))}</span></span>
                         </span>
                       </span>
                       <Spark data={m.spark} up={up} />
@@ -297,6 +309,7 @@ export default function HomeDashboard({ onEnter }) {
                         <span className={`block font-mono text-xs sm:hidden ${up ? 'text-up' : 'text-down'}`}>{pct(m.change ?? 0)}</span>
                       </span>
                       <span className={`hidden text-right font-mono text-sm sm:block ${up ? 'text-up' : 'text-down'}`}>{pct(m.change ?? 0)}</span>
+                      <span className="hidden text-right font-mono text-sm text-txt md:block">{usdCompact(marketCap(m))}</span>
                       <span className="hidden sm:block">
                         <span className="btn btn-ghost btn-sm">Trade</span>
                       </span>

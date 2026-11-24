@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSim } from '../store/useSimStore'
-import { usd, fmtPrice } from '../lib/format'
+import { usd, fmtPrice, fmtQty } from '../lib/format'
 
 const clock = (sec) => {
   const s = Math.max(0, Math.round(sec))
@@ -10,11 +10,35 @@ const clock = (sec) => {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`
 }
 
-// Running TWAP / VWAP orders for the active futures market: progress, average
-// fill vs. the market's VWAP since the order started, and a cancel button.
-export default function AlgoOrders() {
-  const algos = useSim((s) => s.algos)
+// Normalises a futures or spot algo order into what the card shows.
+//  futures → progress in USDT margin · spot buy → USDT spent · spot sell → coins sold
+export function algoView(a, baseAsset = '') {
+  const spot = !!a.spot
+  const buy = spot ? a.side === 'buy' : a.side === 'long'
+  const total = spot ? a.total : a.margin
+  const filled = spot ? a.filled : a.filledMargin
+  const coin = spot && a.side === 'sell'
+  const show = (v) => (coin ? `${fmtQty(v || 0)} ${baseAsset}`.trim() : usd(v || 0))
+  return {
+    spot, buy,
+    label: spot ? (buy ? 'Buy' : 'Sell') : `${buy ? 'Long' : 'Short'} ${a.leverage}x`,
+    pct: total > 0 ? Math.min(100, ((filled || 0) / total) * 100) : 0,
+    progress: (
+      <>
+        <span className="text-txt">{show(filled)}</span> / {show(total)}
+        {spot ? '' : ' margin'}
+      </>
+    ),
+  }
+}
+
+// Running TWAP / VWAP orders for the active market (futures by default, spot with
+// the `spot` prop): progress, average fill vs. the market's VWAP since the order
+// started, and a cancel button.
+export default function AlgoOrders({ spot = false }) {
+  const algos = useSim((s) => (spot ? s.spotAlgos : s.algos))
   const dp = useSim((s) => s.dp)
+  const baseAsset = useSim((s) => s.baseAsset)
   const cancelAlgo = useSim((s) => s.cancelAlgo)
   const clockOffset = useSim((s) => s.clockOffset)
   const [now, setNow] = useState(() => Date.now())
@@ -34,39 +58,36 @@ export default function AlgoOrders() {
       </div>
       <div className="divide-y divide-border">
         {algos.map((a) => {
-          const long = a.side === 'long'
-          const pct = a.margin > 0 ? Math.min(100, (a.filledMargin / a.margin) * 100) : 0
+          const v = algoView(a, baseAsset)
           const avg = a.filledQty > 0 ? a.cost / a.filledQty : null
           const bench = a.mVol > 0 ? a.mPV / a.mVol : null
           // better = bought below / sold above the market's volume-weighted price
-          const edge = avg && bench ? ((long ? bench - avg : avg - bench) / bench) * 100 : null
+          const edge = avg && bench ? ((v.buy ? bench - avg : avg - bench) / bench) * 100 : null
           const left = (a.endAt - (now + clockOffset)) / 1000
           return (
             <div key={a.id} className="space-y-2 py-2.5 first:pt-0 last:pb-0">
               <div className="flex items-center justify-between gap-2">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="rounded bg-panel3 px-1.5 py-0.5 text-[11px] font-semibold text-txt">{a.type.toUpperCase()}</span>
-                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${long ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
-                    {long ? 'Long' : 'Short'} {a.leverage}x
+                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${v.buy ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+                    {v.label}
                   </span>
                   <span className="truncate font-mono text-[11px] text-sub">
                     {left > 0 ? `${clock(left)} left` : 'finishing…'}
                   </span>
                 </span>
-                <button onClick={() => cancelAlgo(a.id)} className="btn btn-outline btn-sm shrink-0 hover:!border-down hover:text-down">
+                <button onClick={() => cancelAlgo(a.id, undefined, spot)} className="btn btn-outline btn-sm shrink-0 hover:!border-down hover:text-down">
                   Cancel
                 </button>
               </div>
 
               <div>
                 <div className="h-1 overflow-hidden rounded-full bg-panel3">
-                  <div className={`h-full rounded-full transition-[width] duration-500 ${long ? 'bg-up' : 'bg-down'}`} style={{ width: `${pct}%` }} />
+                  <div className={`h-full rounded-full transition-[width] duration-500 ${v.buy ? 'bg-up' : 'bg-down'}`} style={{ width: `${v.pct}%` }} />
                 </div>
-                <div className="mt-1 flex justify-between font-mono text-[11px] text-sub">
-                  <span>
-                    <span className="text-txt">{usd(a.filledMargin)}</span> / {usd(a.margin)} margin
-                  </span>
-                  <span>
+                <div className="mt-1 flex justify-between gap-2 font-mono text-[11px] text-sub">
+                  <span className="truncate">{v.progress}</span>
+                  <span className="shrink-0">
                     slice {Math.min(a.done, a.slices)}/{a.slices}
                   </span>
                 </div>

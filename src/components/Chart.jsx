@@ -417,6 +417,7 @@ export default function Chart() {
         markersRef.current = []
         try {
           series.setMarkers([])
+          chart.priceScale('right').applyOptions({ autoScale: true })
           setAll()
         } catch (e) {
           /* noop */

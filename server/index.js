@@ -193,8 +193,12 @@ wss.on('connection', async (ws, req) => {
         const r = hub.placeAlgo(id, sym, m)
         if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
         persist(id); send(ws, meMsg(id))
+      } else if (m.type === 'spotAlgo') {
+        const r = hub.placeSpotAlgo(id, sym, m)
+        if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
+        persist(id); send(ws, meMsg(id))
       } else if (m.type === 'cancelAlgo') {
-        const r = hub.cancelAlgo(id, sym, m.id)
+        const r = hub.cancelAlgo(id, sym, m.id, m.spot ? 'spot' : 'perp')
         if (r.ok) { persist(id); send(ws, meMsg(id, r.event)) }
       } else if (m.type === 'cancelLimit') {
         const r = hub.cancelLimit(id, sym, m.id)

@@ -23,6 +23,7 @@ const emptyCrowd = { traders: 0, realTraders: 0, longOI: 0, shortOI: 0, harveste
 const bookOf = (books, symbol) => books?.[symbol] || { position: null, pendingOrders: [] }
 // resting SPOT limit orders live in the spot venue's book (keyed `${symbol}:spot`)
 const spotBookOf = (books, symbol) => books?.[symbol + ':spot']?.pendingOrders || []
+const spotAlgosOf = (books, symbol) => books?.[symbol + ':spot']?.algos || []
 
 export const useSim = create(
   subscribeWithSelector((set, get) => ({
@@ -58,6 +59,7 @@ export const useSim = create(
     position: null,
     pendingOrders: [],
     algos: [], // running TWAP / VWAP orders for the active symbol (futures)
+    spotAlgos: [], // running spot TWAP / VWAP orders for the active symbol
     clockOffset: 0, // server clock − browser clock (ms), so countdowns survive a wrong PC clock
     spotPending: [], // resting spot limit orders for the active symbol
     leaderboard: [],
@@ -108,7 +110,7 @@ export const useSim = create(
     applySnap: (m) => {
       // re-mirror the active book for the (possibly new) symbol
       const b = bookOf(get().books, m.symbol)
-      set({ position: b.position, pendingOrders: b.pendingOrders, algos: b.algos || [], spotPending: spotBookOf(get().books, m.symbol) })
+      set({ position: b.position, pendingOrders: b.pendingOrders, algos: b.algos || [], spotPending: spotBookOf(get().books, m.symbol), spotAlgos: spotAlgosOf(get().books, m.symbol) })
       get()._applyMarketSnap(m)
     },
 
@@ -171,6 +173,7 @@ export const useSim = create(
         pendingOrders: b.pendingOrders,
         algos: b.algos || [],
         spotPending: spotBookOf(books, get().symbol),
+        spotAlgos: spotAlgosOf(books, get().symbol),
       }
       if (m.now) patch.clockOffset = m.now - Date.now()
       if (m.event) patch.toast = m.event
@@ -198,6 +201,7 @@ export const useSim = create(
         lastLiqEvent: null,
         position: b.position, pendingOrders: b.pendingOrders, algos: b.algos || [],
         spotPending: spotBookOf(st.books, symbol),
+        spotAlgos: spotAlgosOf(st.books, symbol),
       })
       const send = st._send
       if (send) send({ type: 'sub', symbol, mode: st.mode })
@@ -232,7 +236,8 @@ export const useSim = create(
     modifyPosition: (payload) => { const s = get(); s._send && s._send({ type: 'modify', symbol: s.symbol, ...payload }) },
     placeLimit: (payload) => { const s = get(); s._send && s._send({ type: 'limit', symbol: s.symbol, ...payload }) },
     placeAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'algo', symbol: s.symbol, ...payload }) },
-    cancelAlgo: (id, symbol) => { const s = get(); s._send && s._send({ type: 'cancelAlgo', symbol: symbol || s.symbol, id }) },
+    cancelAlgo: (id, symbol, spot) => { const s = get(); s._send && s._send({ type: 'cancelAlgo', symbol: symbol || s.symbol, id, spot: !!spot }) },
+    placeSpotAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'spotAlgo', symbol: s.symbol, ...payload }) },
     cancelLimit: (id) => { const s = get(); s._send && s._send({ type: 'cancelLimit', symbol: s.symbol, id }) },
     moveLimit: (id, price) => { const s = get(); s._send && s._send({ type: 'moveLimit', symbol: s.symbol, id, price }) },
     mm: (cmd, payload) => { const s = get(); s._send && s._send({ type: 'mm', symbol: s.symbol, cmd, payload }) },

@@ -164,7 +164,7 @@ export class MarketHub {
     for (const m of this.markets.values()) {
       const book = m.books.get(id)
       if (!book) continue
-      for (const a of book.algos || []) v += a.reserved || 0
+      for (const a of book.algos || []) v += a.spot && a.side === 'sell' ? (a.remQty || 0) * m.price : a.reserved || 0
       for (const o of book.pendingOrders || []) {
         const rem = Math.max(0, o.qty - (o.filled || 0))
         if (rem <= 1e-12) continue
@@ -318,7 +318,7 @@ export class MarketHub {
   // It's a market taker order — it WALKS the same book as a perp market order,
   // so it pays slippage and pushes price up, and other users' resting sell
   // limits get filled against it. Coins land in the user's spot inventory.
-  spotBuy(id, symbol, { quote }) {
+  spotBuy(id, symbol, { quote, coinCarry }) {
     const u = this.users.get(id)
     const m = this.market(symbol, 'spot')
     if (!u || !m) return { ok: false, error: 'No session' }
@@ -328,7 +328,10 @@ export class MarketHub {
     if (quote + fee > u.balance) return { ok: false, error: 'Saldo tidak cukup (jumlah + fee)' }
     const qtyEst = quote / m.price
     const { price: avg, userQty } = m.walkBook('long', qtyEst, id)
-    const coins = m.rq(quote / avg)
+    // algo slices pass the fractional coins left over from earlier slices so many
+    // tiny buys add up to exactly what one big buy would give (plain buys: unchanged)
+    const rawCoins = quote / avg + (coinCarry || 0)
+    const coins = coinCarry == null ? m.rq(quote / avg) : Math.floor(rawCoins * 1e6 + 1e-9) / 1e6
     if (coins <= 0) return { ok: false, error: 'Jumlah terlalu kecil' }
     const flow = Math.max(0, coins - userQty) // bot-liquidity part pushes price
     m.feesCollected += fee
@@ -339,7 +342,7 @@ export class MarketHub {
     h.cost = round(h.cost + quote + fee)
     u.spot[symbol] = h
     this.dirty.add(id)
-    return { ok: true, user: u, symbol, event: { type: 'spotBuy', symbol, qty: coins, price: m.r(avg), cost: round(quote + fee), id: Date.now() } }
+    return { ok: true, user: u, symbol, event: { type: 'spotBuy', symbol, qty: coins, price: m.r(avg), cost: round(quote + fee), carry: coinCarry == null ? 0 : rawCoins - coins, id: Date.now() } }
   }
 
   // Spot sell: sell `qty` coins (clamped to the holding) back to USDT at market.
@@ -643,7 +646,7 @@ export class MarketHub {
     slices = Math.round(+slices)
     if (!(slices >= 2 && slices <= ALGO_MAX_SLICES)) return { ok: false, error: `Jumlah slice harus 2 – ${ALGO_MAX_SLICES}` }
     if (duration / (slices - 1) < ALGO_MIN_INTERVAL) return { ok: false, error: `Jarak antar slice minimal ${ALGO_MIN_INTERVAL} detik — kurangi slice atau perpanjang durasi` }
-    if (margin / slices < ALGO_MIN_SLICE) return { ok: false, error: `Margin per slice minimal ${ALGO_MIN_SLICE} — kurangi slice atau tambah margin` }
+    if (margin / slices < ALGO_MIN_SLICE) return { ok: false, error: `Margin per slice minimal $${ALGO_MIN_SLICE} — kurangi slice atau tambah margin` }
     const cur = m.books.get(id)
     if (cur?.position && cur.position.side !== side) return { ok: false, error: 'Tutup posisi dulu untuk balik arah' }
     if (cur?.pendingOrders?.some((o) => o.side !== side)) return { ok: false, error: 'Cancel limit order sisi sebaliknya dulu' }
@@ -672,9 +675,9 @@ export class MarketHub {
     return { ok: true, user: u, symbol }
   }
 
-  cancelAlgo(id, symbol, algoId) {
+  cancelAlgo(id, symbol, algoId, mode = 'perp') {
     const u = this.users.get(id)
-    const m = this.markets.get(symbol)
+    const m = this.market(symbol, mode === 'spot' ? 'spot' : 'perp')
     if (!u || !m) return { ok: false }
     const book = m.books.get(id)
     const a = book?.algos?.find((x) => x.id === algoId)
@@ -689,12 +692,22 @@ export class MarketHub {
   endAlgo(u, m, book, a, status, reason) {
     if (a.reserved > 0) u.balance = round(u.balance + a.reserved)
     a.reserved = 0
+    if (a.spot && a.side === 'sell') this.endSpotSell(u, m, a)
+    if (a.spot && a.side === 'buy' && a.coinCarry > 1e-9) {
+      // hand over the fractional coins the slices carried (already paid for)
+      const h = u.spot[m.symbol] || { qty: 0, cost: 0 }
+      h.qty = r8(h.qty + a.coinCarry)
+      u.spot[m.symbol] = h
+      a.coinCarry = 0
+    }
     book.algos = (book.algos || []).filter((x) => x.id !== a.id)
     this.dirty.add(u.id)
     return {
       type: 'algo', algo: a.type, status, reason, symbol: m.symbol, side: a.side,
       avg: a.filledQty > 0 ? m.r(a.cost / a.filledQty) : null,
-      filledMargin: round(a.filledMargin), margin: a.margin,
+      spot: !!a.spot,
+      // futures: USDT margin · spot buy: USDT spent · spot sell: coins sold
+      filledMargin: a.spot ? a.filled : round(a.filledMargin), margin: a.spot ? a.total : a.margin,
       id: Date.now() + Math.random(),
     }
   }
@@ -724,12 +737,152 @@ export class MarketHub {
     return true
   }
 
+  // ── spot TWAP / VWAP ──────────────────────────────────────────────────────
+  // Same scheduler as the futures algos, on the spot book:
+  //  · buy  — spends `spend` USDT over the run. USDT + taker fee are reserved up
+  //    front; each slice is a spot market buy charged to the exact amount.
+  //  · sell — sells `qty` coins over the run. The coins (and their cost basis)
+  //    leave the holding and sit in the order; each slice walks the book and the
+  //    proceeds land in the balance. ONE trade record is written when it ends.
+  // Anything unexecuted goes back (USDT to the balance, coins to the holding).
+  placeSpotAlgo(id, symbol, { algo, side, spend, qty, duration, slices }) {
+    const u = this.users.get(id)
+    const m = this.market(symbol, 'spot')
+    if (!u || !m) return { ok: false, error: 'No session' }
+    const type = algo === 'twap' || algo === 'vwap' ? algo : null
+    if (!type) return { ok: false, error: 'Tipe order tidak dikenal' }
+    if (side !== 'buy' && side !== 'sell') return { ok: false, error: 'Bad side' }
+    duration = Math.round(+duration)
+    if (!(duration >= ALGO_MIN_SEC && duration <= ALGO_MAX_SEC)) return { ok: false, error: `Durasi harus ${ALGO_MIN_SEC} detik – ${ALGO_MAX_SEC / 3600} jam` }
+    slices = Math.round(+slices)
+    if (!(slices >= 2 && slices <= ALGO_MAX_SLICES)) return { ok: false, error: `Jumlah slice harus 2 – ${ALGO_MAX_SLICES}` }
+    if (duration / (slices - 1) < ALGO_MIN_INTERVAL) return { ok: false, error: `Jarak antar slice minimal ${ALGO_MIN_INTERVAL} detik — kurangi slice atau perpanjang durasi` }
+    const cur = m.books.get(id)
+    if ((cur?.algos?.length || 0) >= ALGO_MAX_ACTIVE) return { ok: false, error: `Maksimal ${ALGO_MAX_ACTIVE} order TWAP/VWAP aktif per market` }
+    const now = Date.now()
+    const base = {
+      id: 'a' + Math.random().toString(36).slice(2, 9),
+      spot: true, type, side, duration, slices,
+      done: 0, filled: 0, filledQty: 0, cost: 0, // cost = Σ USDT traded → avg fill = cost / filledQty
+      mVol: 0, mPV: 0,
+      expVol: m.avgVolPerSec() * duration,
+      startedAt: now, nextAt: now, endAt: now + duration * 1000,
+    }
+    if (side === 'buy') {
+      spend = Math.floor((+spend || 0) * 100) / 100
+      if (!(spend > 0)) return { ok: false, error: 'Jumlah beli tidak valid' }
+      if (spend / slices < ALGO_MIN_SLICE) return { ok: false, error: `Nilai per slice minimal $${ALGO_MIN_SLICE} — kurangi slice atau tambah jumlah` }
+      const reserve = Math.ceil(spend * (1 + TAKER_FEE) * 100 - 1e-6) / 100
+      if (reserve > u.balance) return { ok: false, error: 'Saldo tidak cukup (jumlah + fee taker)' }
+      u.balance = round(u.balance - reserve)
+      m.book(id).algos.push({ ...base, total: spend, reserved: reserve })
+    } else {
+      qty = +qty
+      const h = u.spot[symbol]
+      if (!h || h.qty <= 0) return { ok: false, error: 'Tidak ada koin untuk dijual' }
+      if (!(qty > 0)) return { ok: false, error: 'Jumlah jual tidak valid' }
+      if (qty > h.qty + 1e-9) return { ok: false, error: `Maksimum ${m.rq(h.qty)} ${m.baseAsset}` }
+      qty = Math.min(Math.floor(Math.min(qty, h.qty) * 1e6 + 1e-6) / 1e6, h.qty)
+      if (!(qty > 0)) return { ok: false, error: 'Jumlah jual tidak valid' }
+      if ((qty * m.price) / slices < ALGO_MIN_SLICE) return { ok: false, error: `Nilai per slice minimal $${ALGO_MIN_SLICE} — kurangi slice atau tambah jumlah` }
+      const costBasis = Math.min(h.cost, round(h.cost * Math.min(1, qty / h.qty))) // cost of the coins committed to this order
+      h.qty = r8(h.qty - qty) // keep sub-1e-6 dust instead of rounding it away (or up)
+      h.cost = round(h.cost - costBasis)
+      if (h.qty <= 1e-9) delete u.spot[symbol]
+      else u.spot[symbol] = h
+      m.book(id).algos.push({
+        ...base, total: qty, reserved: 0,
+        remQty: qty, costBasis, // coins (and their cost) still held by the order
+        proceeds: 0, fees: 0, costSold: 0, carry: 0, // carry = sub-cent proceeds not yet paid out
+      })
+    }
+    this.dirty.add(id)
+    return { ok: true, user: u, symbol }
+  }
+
+  // One child order of a spot algo. `want` is USDT (buy) or coins (sell).
+  // Returns true (filled), false (nothing this slot) or an error string.
+  spotAlgoSlice(u, m, a, want) {
+    if (a.side === 'buy') {
+      const k = 1 + TAKER_FEE
+      let q = Math.min(want, a.total - a.filled, (a.reserved + 1e-6) / k)
+      q = Math.floor(q * 100 + 1e-6) / 100
+      if (!(q >= 0.01)) return false
+      const free = u.balance
+      u.balance = free + q * k + 0.01 // lend the slice its funds for the market-buy balance check
+      const r = this.spotBuy(u.id, m.symbol, { quote: q, coinCarry: a.coinCarry || 0 })
+      u.balance = free
+      if (!r.ok) return r.error === 'Jumlah terlalu kecil' ? false : r.error || 'Order gagal'
+      a.coinCarry = r.event.carry || 0
+      a.reserved = Math.max(0, Math.round((a.reserved - q * k) * 1e6) / 1e6)
+      // spotBuy books the cost basis cent-rounded per slice; carry the sub-cent
+      // difference so many slices don't drift the holding's cost from what was paid
+      a.costCarry = (a.costCarry || 0) + (q * k - r.event.cost)
+      const adj = Math.trunc(a.costCarry * 100 + (a.costCarry >= 0 ? 1e-9 : -1e-9)) / 100
+      const h = u.spot[m.symbol]
+      if (adj && h) { h.cost = round(h.cost + adj); a.costCarry -= adj }
+      a.filled = round(a.filled + q)
+      a.filledQty += r.event.qty
+      a.cost += q
+      return true
+    }
+    let sq = Math.min(want, a.remQty)
+    sq = Math.floor(sq * 1e6 + 1e-9) / 1e6
+    if (!(sq > 0)) return false
+    const cb = a.remQty > 0 ? a.costBasis * (sq / a.remQty) : 0
+    const { price: avg, userQty } = m.walkBook('short', sq, u.id)
+    const proceeds = sq * avg
+    const fee = proceeds * TAKER_FEE
+    m.feesCollected += fee
+    m.pendingFlow -= Math.max(0, sq - userQty)
+    // pay out whole cents now, carry the sub-cent remainder to the next slice
+    const due = (a.carry || 0) + proceeds - fee
+    const pay = Math.floor(due * 100 + 1e-9) / 100
+    u.balance = round(u.balance + pay)
+    a.carry = due - pay
+    a.remQty = m.rq(a.remQty - sq)
+    a.costBasis -= cb
+    a.costSold += cb
+    a.proceeds += proceeds
+    a.fees += fee
+    a.filled = m.rq(a.filled + sq)
+    a.filledQty += sq
+    a.cost += proceeds
+    return true
+  }
+
+  // settle a spot SELL algo that is ending: leftover coins back to the holding,
+  // the sub-cent carry paid out, and the whole run booked as one closed trade
+  endSpotSell(u, m, a) {
+    const symbol = m.symbol
+    if (a.carry > 0) u.balance = round(u.balance + a.carry)
+    a.carry = 0
+    if (a.remQty > 1e-9) {
+      const h = u.spot[symbol] || { qty: 0, cost: 0 }
+      h.qty = r8(h.qty + a.remQty)
+      h.cost = round(h.cost + Math.max(0, a.costBasis))
+      u.spot[symbol] = h
+    }
+    a.remQty = 0
+    a.costBasis = 0
+    if (a.filledQty > 0) {
+      const net = round(a.proceeds - a.fees - a.costSold)
+      u.trades += 1
+      if (net > 0) u.wins += 1
+      u.realized = round(u.realized + net)
+      u.history = [{
+        symbol, kind: 'spot', side: 'sell', price: m.r(a.proceeds / a.filledQty), qty: m.rq(a.filledQty),
+        cost: round(a.costSold), proceeds: round(a.proceeds), pnl: net, fee: round(a.fees),
+        reason: 'spot', closedAt: Date.now(),
+      }, ...u.history].slice(0, 40)
+    }
+  }
+
   // Runs once per tick, after every market stepped: advance each algo's market
   // benchmark and fire the slices that are due.
   processAlgos(now = Date.now()) {
     const updates = []
     for (const m of this.markets.values()) {
-      if (!m.isPerp) continue
       for (const [uid, book] of m.books) {
         if (!book.algos || !book.algos.length) continue
         const u = this.users.get(uid)
@@ -743,26 +896,32 @@ export class MarketHub {
             continue
           }
           if (now < a.nextAt) continue
+          // size unit: USDT margin (futures), USDT (spot buy) or coins (spot sell)
+          const total = a.spot ? a.total : a.margin
+          const filled = a.spot ? a.filled : a.filledMargin
+          const coinUnit = a.spot && a.side === 'sell'
+          const minSlice = coinUnit ? ALGO_MIN_SLICE / (m.price || 1) : ALGO_MIN_SLICE
           const lastSlot = a.slices - a.done <= 1
           let want
-          if (lastSlot) want = a.margin - a.filledMargin
-          else if (a.type === 'twap') want = a.margin / a.slices
+          if (lastSlot) want = total - filled
+          else if (a.type === 'twap') want = total / a.slices
           else {
             // share of the schedule this slot should have completed, by time…
             const timeFrac = clamp((now - a.startedAt) / (a.duration * 1000) + 1 / a.slices, 0, 1)
             // …and by the volume the market actually traded so far
             const volFrac = a.expVol > 0 ? a.mVol / a.expVol : timeFrac
             const target = clamp(volFrac, 0.5 * timeFrac, Math.min(1, 1.6 * timeFrac))
-            want = a.margin * target - a.filledMargin
-            if (want < ALGO_MIN_SLICE) want = 0 // quiet market: sit this slot out
+            want = total * target - filled
+            if (want < minSlice) want = 0 // quiet market: sit this slot out
           }
-          const res = want > 0 ? this.algoSlice(u, m, book, a, want) : false
+          const res = want > 0 ? (a.spot ? this.spotAlgoSlice(u, m, a, want) : this.algoSlice(u, m, book, a, want)) : false
           a.done += 1
           if (typeof res === 'string') {
             updates.push({ userId: uid, event: this.endAlgo(u, m, book, a, 'failed', res) })
             continue
           }
-          if (a.done >= a.slices || a.margin - a.filledMargin < 0.01) {
+          const left = (a.spot ? a.total - a.filled : a.margin - a.filledMargin)
+          if (a.done >= a.slices || left < (coinUnit ? 1e-6 : 0.01)) {
             updates.push({ userId: uid, event: this.endAlgo(u, m, book, a, 'done') })
             continue
           }

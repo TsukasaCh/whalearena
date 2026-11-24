@@ -47,6 +47,7 @@ export default function RetailPanel({ mode = 'perp' }) {
         <div className="space-y-4 p-4">
           {isSpot ? (
             <>
+              <AlgoOrders spot />
               <SpotPending />
               <SpotHolding />
               <Staking />
