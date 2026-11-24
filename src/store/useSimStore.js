@@ -53,6 +53,7 @@ export const useSim = create(
     books: {}, // { [symbol]: { position, pendingOrders } }
     spot: {}, // spot holdings { [symbol]: { qty, cost } }
     staked: {}, // staking pocket { [symbol]: { qty, cost, since, earned } }
+    lbHidden: false, // privacy: true = this account is not shown on the leaderboard
     grids: [], // running spot grid bots [{ id, symbol, lower, upper, grids, invest, usdt, coins, … }]
     equity: 0,
     unrealized: 0,
@@ -169,6 +170,7 @@ export const useSim = create(
         spot: m.spot || {},
         staked: m.staked || {},
         grids: m.grids || [],
+        lbHidden: !!m.lbHidden,
         equity: m.equity ?? get().equity,
         unrealized: m.unrealized ?? get().unrealized,
         position: b.position,
@@ -239,6 +241,7 @@ export const useSim = create(
     placeLimit: (payload) => { const s = get(); s._send && s._send({ type: 'limit', symbol: s.symbol, ...payload }) },
     placeAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'algo', symbol: s.symbol, ...payload }) },
     cancelAlgo: (id, symbol, spot) => { const s = get(); s._send && s._send({ type: 'cancelAlgo', symbol: symbol || s.symbol, id, spot: !!spot }) },
+    setLbHidden: (hidden) => { const s = get(); set({ lbHidden: !!hidden }); s._send && s._send({ type: 'setLbHidden', hidden: !!hidden }) },
     startGrid: (payload) => { const s = get(); s._send && s._send({ type: 'gridStart', symbol: s.symbol, ...payload }) },
     stopGrid: (id) => { const s = get(); s._send && s._send({ type: 'gridStop', id }) },
     placeSpotAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'spotAlgo', symbol: s.symbol, ...payload }) },

@@ -111,6 +111,7 @@ export class MarketHub {
       staked: a.staked && typeof a.staked === 'object' ? a.staked : {},
       // spot grid bots: [{ id, symbol, lower, upper, grids, invest, usdt, coins, … }]
       grids: Array.isArray(a.grids) ? a.grids : [],
+      lbHidden: !!a.lbHidden, // privacy: keep this account off the leaderboard
     }
     this.users.set(id, u)
     // restore persisted positions / resting orders into their markets
@@ -265,6 +266,7 @@ export class MarketHub {
       spot: u.spot,
       staked: u.staked,
       grids: (u.grids || []).map(({ flips, ...g }) => g),
+      lbHidden: !!u.lbHidden,
     }
   }
 

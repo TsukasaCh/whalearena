@@ -21,6 +21,8 @@ export default function HomeDashboard({ onEnter }) {
   const staked = useSim((s) => s.staked)
   const grids = useSim((s) => s.grids)
   const stopGrid = useSim((s) => s.stopGrid)
+  const lbHidden = useSim((s) => s.lbHidden)
+  const setLbHidden = useSim((s) => s.setLbHidden)
   const symbols = useSim((s) => s.symbols)
   const leaderboard = useSim((s) => s.leaderboard)
   const setSymbol = useSim((s) => s.setSymbol)
@@ -399,6 +401,24 @@ export default function HomeDashboard({ onEnter }) {
             </Panel>
 
             <Panel title="Leaderboard" right="by equity">
+              {/* privacy: each player chooses whether they appear on the board */}
+              <label className="mb-2 flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-panel2/60 px-3 py-2.5">
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-medium text-txt">Tampilkan saya di leaderboard</span>
+                  <span className="block text-[11px] text-sub">
+                    {lbHidden ? 'Kamu tersembunyi — pemain lain tidak melihat nama & equity kamu.' : 'Nama & equity kamu terlihat oleh semua pemain.'}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-checked={!lbHidden}
+                  checked={!lbHidden}
+                  onChange={(e) => setLbHidden(!e.target.checked)}
+                  className="peer sr-only"
+                />
+                <span className="relative h-5 w-9 shrink-0 rounded-full bg-panel3 transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-sub after:transition-all peer-checked:bg-up peer-checked:after:translate-x-4 peer-checked:after:bg-white peer-focus-visible:ring-1 peer-focus-visible:ring-txt" />
+              </label>
               {leaderboard.length === 0 ? (
                 <Empty>No traders yet</Empty>
               ) : (

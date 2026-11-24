@@ -93,15 +93,19 @@ function buildLeaderboard() {
   for (const c of clients) if (c.user.role === 'trader') online.add(c.user.id)
   // every account loaded in the hub (online or with positions still running offline)
   const live = new Map()
-  for (const u of hub.users.values()) live.set(u.id, { name: u.name, equity: hub.userEquity(u.id), pnl: hub.userUnrealized(u.id), online: online.has(u.id) })
+  for (const u of hub.users.values()) live.set(u.id, { name: u.name, equity: hub.userEquity(u.id), pnl: hub.userUnrealized(u.id), online: online.has(u.id), hidden: !!u.lbHidden })
   const seen = new Set()
-  const humans = humanRows.map((r) => {
+  // players who opted out are left off entirely: the stored rows already exclude
+  // them (WHERE lb_hidden = 0); the live flag covers the seconds before that refreshes
+  const humans = []
+  for (const r of humanRows) {
     const key = r.name.toLowerCase()
     seen.add(key)
     const l = live.get(key)
-    return { name: r.name, equity: l ? l.equity : r.balance, pnl: l ? l.pnl : 0, online: !!l?.online, bot: false }
-  })
-  for (const [key, l] of live) if (!seen.has(key)) humans.push({ name: l.name, equity: l.equity, pnl: l.pnl, online: l.online, bot: false })
+    if (l?.hidden) continue
+    humans.push({ name: r.name, equity: l ? l.equity : r.balance, pnl: l ? l.pnl : 0, online: !!l?.online, bot: false })
+  }
+  for (const [key, l] of live) if (!seen.has(key) && !l.hidden) humans.push({ name: l.name, equity: l.equity, pnl: l.pnl, online: l.online, bot: false })
   // real users only — the bot crowd populates the market & order book, not the board
   humans.sort((a, b) => b.equity - a.equity)
   return humans.slice(0, 25)
@@ -194,6 +198,14 @@ wss.on('connection', async (ws, req) => {
         const r = hub.placeAlgo(id, sym, m)
         if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
         persist(id); send(ws, meMsg(id))
+      } else if (m.type === 'setLbHidden') {
+        // privacy setting: show / hide this account on the leaderboard
+        const u = hub.getUser(id)
+        if (!u) return
+        u.lbHidden = !!m.hidden
+        Promise.resolve(storage.setLbHidden(id, u.lbHidden)).then(refreshHumans).catch((e) => console.warn('setLbHidden failed:', e.message))
+        send(ws, meMsg(id))
+        broadcast({ type: 'lb', lb: buildLeaderboard() })
       } else if (m.type === 'gridStart') {
         const r = hub.startGrid(id, sym, m)
         if (!r.ok) return send(ws, { type: 'orderError', error: r.error })

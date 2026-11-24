@@ -54,6 +54,7 @@ const toAccount = (u) => ({
   balance: u.balance, trades: u.trades || 0, wins: u.wins || 0, realized: u.realized || 0,
   books: parse(u.books, {}), history: parse(u.history, []), spot: parse(u.spot, {}), staked: parse(u.staked, {}),
   grids: parse(u.grids, []),
+  lbHidden: !!u.lb_hidden,
 })
 
 export async function getAccount(name) {

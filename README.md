@@ -357,6 +357,10 @@ chart re-fits its price axis whenever you switch timeframe or market.
   the human players with the whole **bot crowd** — each bot shown with its
   nickname, side/leverage and realtime PnL. "Enter Market" opens the chart/trading
   view; the **Home / Trade** tabs switch between them.
+- **Leaderboard privacy** — a switch at the top of the leaderboard lets each player
+  choose whether they appear on it. A hidden player is left off the board for
+  everyone (name and equity); the choice is stored with the account (`lb_hidden`
+  column) and survives restarts. Trading is unaffected.
 - **Chart legend** — hover any candle for an O/H/L/C + change% + Volume readout
   (top-left), plus a **volume histogram** under the candles.
 - **Click-to-trade on the chart** (OKX-style) — hover anywhere on the chart and a

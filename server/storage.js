@@ -44,6 +44,8 @@ async function makeSqlite() {
   addCol('staked', "staked TEXT NOT NULL DEFAULT '{}'")
   // spot grid bots, as JSON [{ id, symbol, lower, upper, grids, invest, usdt, coins, … }]
   addCol('grids', "grids TEXT NOT NULL DEFAULT '[]'")
+  // privacy: 1 = the player asked not to be shown on the leaderboard
+  addCol('lb_hidden', 'lb_hidden INTEGER NOT NULL DEFAULT 0')
   // per-symbol market state (price, anchor, candle history) so prices resume after a restart
   db.exec(`
     CREATE TABLE IF NOT EXISTS markets (
@@ -73,7 +75,8 @@ async function makeSqlite() {
   const qGet = db.prepare('SELECT * FROM users WHERE name_key = ?')
   const qInsert = db.prepare('INSERT INTO users (name_key,name,salt,hash,balance,created_at) VALUES (?,?,?,?,?,?)')
   const qSave = db.prepare('UPDATE users SET balance=?, trades=?, wins=?, realized=?, books=?, history=?, spot=?, staked=?, grids=? WHERE name_key=?')
-  const qTop = db.prepare('SELECT name, balance, trades, wins, realized FROM users ORDER BY balance DESC LIMIT ?')
+  const qTop = db.prepare('SELECT name, balance, trades, wins, realized FROM users WHERE lb_hidden = 0 ORDER BY balance DESC LIMIT ?')
+  const qHide = db.prepare('UPDATE users SET lb_hidden=? WHERE name_key=?')
   const qActive = db.prepare("SELECT * FROM users WHERE books <> '{}' OR grids <> '[]'")
   const qMarketSave = db.prepare('INSERT INTO markets (symbol,state,updated_at) VALUES (?,?,?) ON CONFLICT(symbol) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at')
   const qMarkets = db.prepare('SELECT symbol, state FROM markets')
@@ -84,6 +87,7 @@ async function makeSqlite() {
     async createUser({ nameKey, name, salt, hash, balance }) { qInsert.run(nameKey, name, salt, hash, balance, Date.now()) },
     async saveAccount(key, f) { qSave.run(round(f.balance), f.trades | 0, f.wins | 0, round(f.realized), toJson(f.books, '{}'), toJson(f.history, '[]'), toJson(f.spot, '{}'), toJson(f.staked, '{}'), toJson(f.grids, '[]'), key) },
     async topTraders(limit) { return qTop.all(limit) },
+    async setLbHidden(key, hidden) { qHide.run(hidden ? 1 : 0, key) },
     async activeUsers() { return qActive.all() },
     async saveMarket(symbol, state) { qMarketSave.run(symbol, state, Date.now()) },
     async loadMarkets() { return qMarkets.all() },
@@ -120,6 +124,7 @@ async function makePostgres() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS spot TEXT NOT NULL DEFAULT '{}'`)
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS staked TEXT NOT NULL DEFAULT '{}'`)
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS grids TEXT NOT NULL DEFAULT '[]'`)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS lb_hidden INTEGER NOT NULL DEFAULT 0`)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS markets (
       symbol     TEXT PRIMARY KEY,
@@ -141,8 +146,11 @@ async function makePostgres() {
       await pool.query('UPDATE users SET balance=$1, trades=$2, wins=$3, realized=$4, books=$5, history=$6, spot=$7, staked=$8, grids=$9 WHERE name_key=$10', [round(f.balance), f.trades | 0, f.wins | 0, round(f.realized), toJson(f.books, '{}'), toJson(f.history, '[]'), toJson(f.spot, '{}'), toJson(f.staked, '{}'), toJson(f.grids, '[]'), key])
     },
     async topTraders(limit) {
-      const { rows } = await pool.query('SELECT name, balance, trades, wins, realized FROM users ORDER BY balance DESC LIMIT $1', [limit])
+      const { rows } = await pool.query('SELECT name, balance, trades, wins, realized FROM users WHERE lb_hidden = 0 ORDER BY balance DESC LIMIT $1', [limit])
       return rows
+    },
+    async setLbHidden(key, hidden) {
+      await pool.query('UPDATE users SET lb_hidden=$1 WHERE name_key=$2', [hidden ? 1 : 0, key])
     },
     async activeUsers() {
       const { rows } = await pool.query("SELECT * FROM users WHERE books <> '{}' OR grids <> '[]'")
@@ -168,6 +176,7 @@ export const storage = {
   createUser: (u) => backend.createUser(u),
   saveAccount: (key, f) => backend.saveAccount(key, f),
   topTraders: (n) => backend.topTraders(n),
+  setLbHidden: (key, hidden) => backend.setLbHidden(key, hidden),
   activeUsers: () => backend.activeUsers(),
   saveMarket: (symbol, state) => backend.saveMarket(symbol, state),
   loadMarkets: () => backend.loadMarkets(),
