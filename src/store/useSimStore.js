@@ -227,7 +227,7 @@ export const useSim = create(
     closePosition: () => { const s = get(); s._send && s._send({ type: 'close', symbol: s.symbol }) },
     spotBuy: (quote) => { const s = get(); s._send && s._send({ type: 'spotBuy', symbol: s.symbol, quote }) },
     spotSell: (qty) => { const s = get(); s._send && s._send({ type: 'spotSell', symbol: s.symbol, qty }) },
-    spotLimit: ({ side, price, spend, qty }) => { const s = get(); s._send && s._send({ type: 'spotLimit', symbol: s.symbol, side, price, spend, qty }) },
+    spotLimit: ({ side, price, spend, qty, visible }) => { const s = get(); s._send && s._send({ type: 'spotLimit', symbol: s.symbol, side, price, spend, qty, visible }) },
     spotCancelLimit: (id) => { const s = get(); s._send && s._send({ type: 'spotCancelLimit', symbol: s.symbol, id }) },
     spotMoveLimit: (id, price) => { const s = get(); s._send && s._send({ type: 'spotMoveLimit', symbol: s.symbol, id, price }) },
     stake: (qty) => { const s = get(); s._send && s._send({ type: 'stake', symbol: s.symbol, qty }) },

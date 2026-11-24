@@ -1,7 +1,8 @@
 # 🐋 Whale Arena — Perp Trading Game
 
-An **online, real-time perp-trading game** you play with friends. **12 tradable
-markets** (BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, LINK, TRX, TON, PEPE) — each
+An **online, real-time perp-trading game** you play with friends. **13 tradable
+markets** (BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, LINK, TRX, TON, PEPE and the
+game's own **RCLD** token) — each
 with its own live price, order book, bot crowd and **~3 months of candle history**
 — and two roles:
 
@@ -9,9 +10,10 @@ with its own live price, order book, bot crowd and **~3 months of candle history
   total & realized PnL, win rate, a **live markets ticker** with sparklines, all
   **open positions** across pairs, **pending limit orders**, recent trades and the
   leaderboard), then enter any market to open leveraged Long/Short positions —
-  **market or resting limit orders** — with SL/TP they can edit on the fly, plus a
-  **trailing stop**. Profitable trades can be shown off with a **shareable PnL card**
-  (download PNG / native share).
+  **market, resting limit, iceberg, TWAP or VWAP orders** — with SL/TP they can edit
+  on the fly, plus a **trailing stop**. The same order types work on the **Spot**
+  venue, where every token also shows its **market cap**. Profitable trades can be
+  shown off with a **shareable PnL card** (download PNG / native share).
 - **🐋 The Whale (Host / God Mode)** paints the candles of any market — pump, dump,
   wick-hunts, chop — to sweep every trader's stops & liquidations and harvest margin.
 
@@ -172,10 +174,12 @@ src/
 └─ components/
    ├─ Landing.jsx         # public landing page at "/"
    ├─ AuthGate.jsx        # single-role login (trader at /play OR whale at /whale-god)
-   ├─ TopBar.jsx          # brand, price, equity/harvested, timeframe, user, logout
+   ├─ TopBar.jsx          # nav bar + TickerBar (pair picker, price, funding / market cap) + timeframes
    ├─ Chart.jsx           # lightweight-charts + entry/SL/TP/LIQ lines + skull markers
-   ├─ RetailPanel.jsx     # trader page: position + order book + order form + history
-   │  ├─ OrderForm.jsx / PositionCard.jsx / OrderBook.jsx
+   ├─ RetailPanel.jsx     # trader page: order book column + trade column (position, form, history)
+   │  ├─ OrderForm.jsx / PositionCard.jsx / OrderBook.jsx     # futures: Market / Limit / Iceberg / TWAP / VWAP
+   │  ├─ SpotForm.jsx / SpotHolding.jsx / SpotPending.jsx / Staking.jsx   # spot venue
+   │  └─ AlgoOrders.jsx   # running TWAP / VWAP orders (futures or spot)
    └─ MarketMakerPanel.jsx# Whale page: crowd, presets, joystick, liquidity map
       └─ CrowdStats.jsx / LiquidityMap.jsx
 ```
@@ -226,6 +230,86 @@ Because impact is permanent, price is kept sane by a slow **fair-value anchor**:
 gentle mean-reversion pulls price back toward it over minutes and a hard band
 (`0.5×…2×` the anchor) caps it, so whale moves persist for a while but the market
 can never run away.
+
+### Iceberg orders
+
+An **iceberg** is a limit order that shows only part of its size. Pick the
+**Iceberg** tab (Futures or Spot), set a limit price and size as usual, and choose
+how much of the order is **visible** (1 – 50 %).
+
+- The order book — yours, other traders' and the Whale's — only ever shows the
+  visible **tip** at that price. When the tip is filled the next one appears, until
+  the whole order is done; the rest stays hidden.
+- The hidden size is still real liquidity: it fills at the limit price and holds
+  price at that level exactly like a normal wall. It just can't be *seen* in
+  advance, so a large buyer or seller doesn't advertise a wall for the Whale to
+  hunt or for others to front-run.
+- Everything else is a normal limit order: maker fee, margin reserved up front,
+  partial fills, drag-to-reprice on the chart (drawn as an `ICEBERG` line), and
+  cancel refunds the unfilled part. Pending lists tag it `Iceberg 10%`.
+
+Server side it is one field on the resting order (`visFrac`, set by `icebergFrac()`
+in `server/engine.js`); `Market.restingOrders()` publishes only the tip.
+
+### Algo orders: TWAP & VWAP
+
+A big market order eats straight through the book and pays for it in slippage.
+The two algo order types work the same size as a **series of small market child
+orders ("slices")** instead. Both are available on **Futures and Spot**, as tabs
+next to Market and Limit in the order form.
+
+- **TWAP** (time-weighted) — equal slices at equal intervals. The first slice fires
+  immediately and the last one lands exactly at the end of the chosen duration.
+- **VWAP** (volume-weighted) — the same slots, but each slice is sized by how much
+  volume the market actually traded since the order started versus its recent
+  average: bigger when the market is busy, smaller (or skipped) when it is quiet.
+  The last slot always completes the order. Until the server has a few minutes of
+  live candles to use as a baseline, VWAP paces by time like a TWAP.
+
+How the money is handled:
+
+| | Reserved up front | Each slice | When it ends |
+| --- | --- | --- | --- |
+| **Futures** | total margin + taker fee | opens / adds to the position (DCA) | unused margin + fee refunded |
+| **Spot buy** | total USDT + taker fee | buys coins into the holding | unused USDT refunded |
+| **Spot sell** | the coins (and their cost basis) | sells coins, proceeds go to the balance | unsold coins return to the holding; the run is booked as **one** trade |
+
+- Reserved funds still count toward **equity** (they are locked, not spent), so
+  placing an algo order never changes your total assets.
+- Slices are charged to the exact amount — sub-cent fees and fractional coins are
+  carried from slice to slice, so 100 tiny slices cost the same as one big order
+  (apart from the better or worse prices they get).
+- An order ends when it **completes**, is **cancelled**, or — on futures — when the
+  position it is building is **closed, liquidated or hits SL/TP**, so it never
+  rebuilds a position you just lost. A whale market reset refunds reservations.
+- The **Algo orders** card (trade panel and Home) shows progress, the slice counter,
+  a countdown, your **average fill** and the **market VWAP** since the order began,
+  with the difference between the two — the usual way to judge an execution.
+
+Limits: 30 s – 4 h duration, 2 – 100 slices, at least 2 s between slices, at least
+$1 per slice, up to 3 running algo orders per market (`ALGO_*` in `server/engine.js`).
+On futures an algo follows the same one-direction rule as every other order.
+
+### Market cap
+
+Each market has a circulating `supply` — and, where the coin has one, a `total`
+(max) supply — in `server/constants.js`. The client shows **market cap = spot price
+× circulating supply** on the Spot ticker bar (with its rank among the listed
+tokens), in the Spot pair picker, and as a column in the Home **Markets** table. The
+ticker bar also shows circulating / total supply and the **FDV** (spot price × total
+supply) when the two differ. The supplies are rough real-world figures, except
+**RCLD** — the game's own token — which has **200M circulating out of a 1B total
+supply**. Edit them there.
+
+### Generated candle history
+
+A fresh market needs months of candles before anyone has traded. They come from
+`synthPath()` in `server/market.js`: a **log random walk with volatility clustering**
+(quiet stretches and bursts), short-lived trends and the occasional impulse bar, plus
+a faint long-horizon pull so multi-month ranges stay plausible. Because it is a walk
+rather than noise around one level, **the visible price range grows with the
+timeframe** — 60 candles of 15m span clearly more than 60 candles of 1m — and the
+chart re-fits its price axis whenever you switch timeframe or market.
 
 ### Data flow
 
@@ -290,7 +374,7 @@ can never run away.
 
 ### Timeframes
 
-`1m · 5m · 15m · 30m · 1h · 4h` — all aggregations of the same base series, so a
+`1m · 5m · 15m · 30m · 1h · 4h · 1d` — all aggregations of the same base series, so a
 bullish 1m run is a bullish 4h candle. Candles bucket by **real wall-clock time**:
 a 1m candle spans one real minute (a new one appears each minute), 5m every five
 minutes, and so on. Price still ticks continuously (the live candle grows in real
@@ -325,6 +409,13 @@ with two interchangeable backends:
   zero-config fallback used when `DATABASE_URL` is absent, so `npm run dev` / `npm run
   server` just work on your laptop. A legacy `server/data.json` is migrated in on first
   start. Point elsewhere with `WHALE_DB=/path/to/whale.db`.
+
+Market state (price, stats and candle history) is saved too, tagged with a format
+version (`HIST_VERSION` in `server/market.js`). When the history generator changes,
+bump it: on the next boot older saves **keep their price and stats** — so open
+positions resume exactly where they were — and only their candle history is rebuilt
+to end on that price. Running TWAP / VWAP orders are stored with the user's books
+and resume after a restart once the account is loaded again.
 
 Passwords are scrypt-hashed. This is a **party game**, not a bank — don't reuse a
 real password. Session tokens live in memory and reset when the server restarts

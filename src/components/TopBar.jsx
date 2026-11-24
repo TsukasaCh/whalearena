@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSim, TIMEFRAMES } from '../store/useSimStore'
 import { useAuth } from '../store/useAuth'
 import { navigate, ROUTES } from '../router'
-import { usd, fmtPrice, pct, compact, marketCap, usdCompact } from '../lib/format'
+import { usd, fmtPrice, pct, compact, marketCap, fdv, usdCompact } from '../lib/format'
 import { CoinIcon } from './ui'
 
 const NAV = [
@@ -155,7 +155,15 @@ export function TickerBar({ isMM, mode = 'perp' }) {
             value={<>{usdCompact(mcap)}<span className="text-sub"> · #{rank}</span></>}
           />
         )}
-        {isSpot && meta?.supply > 0 && <TickStat label="Circulating supply" value={`${compact(meta.supply)} ${meta.base || symbol}`} />}
+        {isSpot && meta?.supply > 0 && (
+          <TickStat
+            label={meta.total > 0 ? 'Circulating / Total supply' : 'Circulating supply'}
+            value={`${compact(meta.supply)}${meta.total > 0 ? ` / ${compact(meta.total)}` : ''} ${meta.base || symbol}`}
+          />
+        )}
+        {isSpot && fdv(meta) && meta.total > meta.supply && (
+          <TickStat label="FDV" title="Fully diluted value: harga spot × total suplai" value={usdCompact(fdv(meta))} />
+        )}
         {!isSpot && <FundingStat />}
         {!isSpot && oi > 0 && <TickStat label="Open interest" value={compact(oi)} />}
         {!isSpot && longPct != null && (

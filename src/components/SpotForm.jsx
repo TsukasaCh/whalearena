@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSim } from '../store/useSimStore'
 import { TAKER_FEE, MAKER_FEE } from '../lib/trading'
 import { usd, fmt, fmtPrice, fmtQty } from '../lib/format'
@@ -26,16 +26,23 @@ export default function SpotForm() {
   const setSpend = (v) => setSpotDraft({ spend: v })
   const setSellQty = (v) => setSpotDraft({ qty: v })
 
-  const [orderType, setOrderType] = useState('market') // 'market' | 'limit' | 'twap' | 'vwap'
+  const [orderType, setOrderType] = useState('market') // 'market' | 'limit' | 'iceberg' | 'twap' | 'vwap'
   const [tab, setTab] = useState('buy') // 'buy' | 'sell'
   const [limitPrice, setLimitPrice] = useState('')
   const [error, setError] = useState('')
   // algo orders (TWAP / VWAP): run time in minutes + number of child orders
   const [minutes, setMinutes] = useState(5)
   const [slices, setSlices] = useState(10)
+  const [visiblePct, setVisiblePct] = useState(10) // iceberg: % of the order shown on the book
 
   const isBuy = tab === 'buy'
-  const isLimit = orderType === 'limit'
+  const isIceberg = orderType === 'iceberg' // a limit order that shows only part of its size
+  const isLimit = orderType === 'limit' || isIceberg
+  // limits dropped from the chart follow the Iceberg tab too
+  useEffect(() => {
+    const vp = Number(visiblePct)
+    setSpotDraft({ visible: isIceberg && vp >= 1 && vp <= 50 ? vp / 100 : undefined })
+  }, [isIceberg, visiblePct, setSpotDraft])
   const isAlgo = orderType === 'twap' || orderType === 'vwap'
   const durationSec = Math.round((Number(minutes) || 0) * 60)
   const sliceCount = Math.round(Number(slices) || 0)
@@ -64,6 +71,9 @@ export default function SpotForm() {
     setError('')
     const lp = Number(limitPrice)
     if (isLimit && (!lp || lp <= 0)) return setError('Masukkan harga limit.')
+    const vp = Number(visiblePct)
+    if (isIceberg && !(vp >= 1 && vp <= 50)) return setError('Porsi terlihat harus 1 – 50%.')
+    const visible = isIceberg ? vp / 100 : undefined
     if (isAlgo) {
       if (!(durationSec >= 30 && durationSec <= 14400)) return setError('Durasi harus 0.5 – 240 menit.')
       if (!(sliceCount >= 2 && sliceCount <= 100)) return setError('Jumlah slice harus 2 – 100.')
@@ -78,7 +88,7 @@ export default function SpotForm() {
         placeSpotAlgo({ algo: orderType, side: 'buy', spend: s, duration: durationSec, slices: sliceCount })
       } else if (isLimit) {
         if (lp >= price) return setError('Limit buy harus DI BAWAH harga pasar.')
-        spotLimit({ side: 'buy', price: lp, spend: s })
+        spotLimit({ side: 'buy', price: lp, spend: s, visible })
       } else spotBuy(s)
     } else {
       const q = Number(sellQty)
@@ -89,7 +99,7 @@ export default function SpotForm() {
         placeSpotAlgo({ algo: orderType, side: 'sell', qty: q, duration: durationSec, slices: sliceCount })
       } else if (isLimit) {
         if (lp <= price) return setError('Limit sell harus DI ATAS harga pasar.')
-        spotLimit({ side: 'sell', price: lp, qty: q })
+        spotLimit({ side: 'sell', price: lp, qty: q, visible })
       } else spotSell(q)
     }
   }
@@ -121,10 +131,11 @@ export default function SpotForm() {
         {[
           { id: 'market', label: 'Market' },
           { id: 'limit', label: 'Limit' },
+          { id: 'iceberg', label: 'Iceberg' },
           { id: 'twap', label: 'TWAP' },
           { id: 'vwap', label: 'VWAP' },
         ].map((t) => (
-          <button key={t.id} onClick={() => { setOrderType(t.id); setError('') }} data-active={orderType === t.id}>
+          <button key={t.id} onClick={() => { setOrderType(t.id); setError('') }} data-active={orderType === t.id} className="!text-[11px]">
             {t.label}
           </button>
         ))}
@@ -201,6 +212,36 @@ export default function SpotForm() {
                 {p * 100}%
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Iceberg: how much of the order the book gets to see */}
+      {isIceberg && (
+        <div className="space-y-3">
+          <div className="rounded-lg bg-panel2/60 px-3 py-2 text-xs leading-relaxed text-sub">
+            <span className="font-semibold text-txt">Iceberg</span> adalah limit order yang hanya menampilkan
+            sebagian ukurannya di order book. Begitu bagian itu terisi, bagian berikutnya muncul — sisanya
+            tersembunyi dari trader lain.
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between text-xs text-sub">
+              <span>Visible size</span>
+              <span className="font-mono">
+                ≈ {fmtQty((isBuy ? buyPrev.coins : sellPrev.q) * ((Number(visiblePct) || 0) / 100))} {baseAsset} shown
+              </span>
+            </div>
+            <div className="field">
+              <input type="number" value={visiblePct} min={1} max={50} step={1} onChange={(e) => setVisiblePct(e.target.value)} />
+              <span className="shrink-0 text-xs text-sub">% of order</span>
+            </div>
+            <div className="mt-2 flex gap-1">
+              {[5, 10, 20, 25, 50].map((v) => (
+                <button key={v} onClick={() => setVisiblePct(v)} data-active={Number(visiblePct) === v} className="chip flex-1 !px-1">
+                  {v}%
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -294,7 +335,7 @@ export default function SpotForm() {
         {isAlgo
           ? `Start ${orderType.toUpperCase()} ${isBuy ? 'Buy' : 'Sell'} ${baseAsset}`
           : isLimit
-            ? `${isBuy ? 'Buy' : 'Sell'} Limit ${baseAsset}`
+            ? `${isBuy ? 'Buy' : 'Sell'} ${isIceberg ? 'Iceberg' : 'Limit'} ${baseAsset}`
             : `${isBuy ? 'Buy' : 'Sell'} ${baseAsset}`}
       </button>
 

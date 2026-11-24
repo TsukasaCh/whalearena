@@ -37,7 +37,14 @@ function PendingList() {
                 {o.side === 'long' ? 'BUY' : 'SELL'} {o.leverage}x
               </span>
               <div className="min-w-0 flex-1">
-                <div className="font-mono text-[13px] font-medium text-txt">@ {fmtPrice(o.price, dp)}</div>
+                <div className="font-mono text-[13px] font-medium text-txt">
+                  @ {fmtPrice(o.price, dp)}
+                  {o.visFrac > 0 && (
+                  <span className="ml-1.5 rounded bg-panel3 px-1 py-px text-[10px] font-semibold text-sub" title="Iceberg: hanya sebagian ukuran yang terlihat di order book">
+                    Iceberg {Math.round(o.visFrac * 100)}%
+                  </span>
+                )}
+                </div>
                 <div className="truncate font-mono text-[11px] text-sub">
                   {usd(o.margin)}
                   {part ? ` · ${Math.round((o.filled / o.qty) * 100)}% filled` : ''}

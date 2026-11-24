@@ -264,7 +264,7 @@ export default function HomeDashboard({ onEnter }) {
                           <span className="text-sm font-semibold text-txt">{o.symbol}USDT</span>
                           <span className={sideBadge(o.side === 'long')}>{o.side === 'long' ? 'Buy' : 'Sell'} {o.leverage}x</span>
                         </span>
-                        <span className="font-mono text-txt">@ {fmtPrice(o.price, dp)}</span>
+                        <span className="font-mono text-txt">@ {fmtPrice(o.price, dp)}{o.visFrac > 0 ? <span className="ml-1.5 text-sub">· Iceberg {Math.round(o.visFrac * 100)}%</span> : null}</span>
                         <span className="font-mono text-sub">{usd(o.margin)}{part ? ` · ${Math.round((o.filled / o.qty) * 100)}%` : ''}</span>
                         <button onClick={() => cancelOrder(o.symbol, o.id)} className="btn btn-outline btn-sm hover:!border-down hover:text-down">Cancel</button>
                       </div>

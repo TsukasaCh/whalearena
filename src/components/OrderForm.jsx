@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSim } from '../store/useSimStore'
 import { liquidationPrice, qtyFromMargin, notional, TAKER_FEE, MAKER_FEE } from '../lib/trading'
 import { usd, fmt, fmtPrice, fmtQty } from '../lib/format'
@@ -21,7 +21,7 @@ export default function OrderForm() {
   const setLeverage = (v) => setOrderDraft({ leverage: v })
   const setMargin = (v) => setOrderDraft({ margin: v })
 
-  const [orderType, setOrderType] = useState('market') // 'market' | 'limit' | 'twap' | 'vwap'
+  const [orderType, setOrderType] = useState('market') // 'market' | 'limit' | 'iceberg' | 'twap' | 'vwap'
   const [side, setSide] = useState('long')
   const [limitPrice, setLimitPrice] = useState('')
   const [sl, setSl] = useState('')
@@ -30,8 +30,15 @@ export default function OrderForm() {
   // algo orders (TWAP / VWAP): run time in minutes + number of child orders
   const [minutes, setMinutes] = useState(5)
   const [slices, setSlices] = useState(10)
+  const [visiblePct, setVisiblePct] = useState(10) // iceberg: % of the order shown on the book
 
-  const isLimit = orderType === 'limit'
+  const isIceberg = orderType === 'iceberg' // a limit order that shows only part of its size
+  const isLimit = orderType === 'limit' || isIceberg
+  // limits dropped from the chart follow the Iceberg tab too
+  useEffect(() => {
+    const vp = Number(visiblePct)
+    setOrderDraft({ visible: isIceberg && vp >= 1 && vp <= 50 ? vp / 100 : undefined })
+  }, [isIceberg, visiblePct, setOrderDraft])
   const isAlgo = orderType === 'twap' || orderType === 'vwap'
   const durationSec = Math.round((Number(minutes) || 0) * 60)
   const sliceCount = Math.round(Number(slices) || 0)
@@ -73,7 +80,9 @@ export default function OrderForm() {
       if (!lp || lp <= 0) return setError('Masukkan harga limit.')
       if (side === 'long' && lp >= price) return setError('Limit buy harus DI BAWAH harga pasar.')
       if (side === 'short' && lp <= price) return setError('Limit sell harus DI ATAS harga pasar.')
-      placeLimit({ side, leverage, margin: m, price: lp, sl: sl ? Number(sl) : null, tp: tp ? Number(tp) : null })
+      const vp = Number(visiblePct)
+      if (isIceberg && !(vp >= 1 && vp <= 50)) return setError('Porsi terlihat harus 1 – 50%.')
+      placeLimit({ side, leverage, margin: m, price: lp, sl: sl ? Number(sl) : null, tp: tp ? Number(tp) : null, visible: isIceberg ? vp / 100 : undefined })
     } else {
       openPosition({ side, leverage, margin: m, sl: sl ? Number(sl) : null, tp: tp ? Number(tp) : null })
     }
@@ -107,10 +116,11 @@ export default function OrderForm() {
       </div>
 
       {/* Market / Limit */}
-      <div className="flex items-center gap-4 border-b border-border text-[13px]">
+      <div className="flex items-center gap-3.5 border-b border-border text-[13px]">
         {[
           { id: 'market', label: 'Market' },
           { id: 'limit', label: 'Limit' },
+          { id: 'iceberg', label: 'Iceberg' },
           { id: 'twap', label: 'TWAP' },
           { id: 'vwap', label: 'VWAP' },
         ].map((t) => (
@@ -124,7 +134,6 @@ export default function OrderForm() {
             {t.label}
           </button>
         ))}
-        <span className="ml-auto pb-2 font-mono text-[11px] text-sub">Avail {usd(balance)}</span>
       </div>
 
       {/* Leverage */}
@@ -172,7 +181,10 @@ export default function OrderForm() {
 
       {/* Margin */}
       <div>
-        <div className="mb-1.5 text-sub">{isAlgo ? 'Total margin (collateral)' : 'Margin (collateral)'}</div>
+        <div className="mb-1.5 flex items-center justify-between text-sub">
+          <span>{isAlgo || isIceberg ? 'Total margin (collateral)' : 'Margin (collateral)'}</span>
+          <span className="font-mono">Avail {usd(balance)}</span>
+        </div>
         <div className="field">
           <input type="number" value={margin} min={0} onChange={(e) => setMargin(e.target.value)} />
           <span className="shrink-0 text-sub">USDT</span>
@@ -185,6 +197,36 @@ export default function OrderForm() {
           ))}
         </div>
       </div>
+
+      {/* Iceberg: how much of the order the book gets to see */}
+      {isIceberg && (
+        <div className="space-y-3">
+          <div className="rounded-lg bg-panel2/60 px-3 py-2 leading-relaxed text-sub">
+            <span className="font-semibold text-txt">Iceberg</span> adalah limit order yang hanya menampilkan
+            sebagian ukurannya di order book. Begitu bagian itu terisi, bagian berikutnya muncul — sisanya
+            tersembunyi dari trader lain (dan dari Whale).
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between text-sub">
+              <span>Visible size</span>
+              <span className="font-mono">
+                ≈ {fmtQty(preview.dca ? qtyFromMargin(Number(margin) || 0, leverage, entry) * ((Number(visiblePct) || 0) / 100) : preview.qty * ((Number(visiblePct) || 0) / 100))} {baseAsset} shown
+              </span>
+            </div>
+            <div className="field">
+              <input type="number" value={visiblePct} min={1} max={50} step={1} onChange={(e) => setVisiblePct(e.target.value)} />
+              <span className="shrink-0 text-sub">% of order</span>
+            </div>
+            <div className="mt-2 flex gap-1">
+              {[5, 10, 20, 25, 50].map((v) => (
+                <button key={v} onClick={() => setVisiblePct(v)} data-active={Number(visiblePct) === v} className="chip flex-1 !px-1">
+                  {v}%
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TWAP / VWAP schedule */}
       {isAlgo && (
@@ -270,8 +312,8 @@ export default function OrderForm() {
             ? `Start ${orderType.toUpperCase()} ${side === 'long' ? 'Long' : 'Short'} ${leverage}x`
             : isLimit
             ? sameSide
-              ? `+ Limit ${side === 'long' ? 'Buy' : 'Sell'} (DCA)`
-              : `Place Limit ${side === 'long' ? 'Buy' : 'Sell'}`
+              ? `+ ${isIceberg ? 'Iceberg' : 'Limit'} ${side === 'long' ? 'Buy' : 'Sell'} (DCA)`
+              : `Place ${isIceberg ? 'Iceberg' : 'Limit'} ${side === 'long' ? 'Buy' : 'Sell'}`
             : sameSide
               ? `+ Tambah ${side.toUpperCase()} (DCA)`
               : `Open ${side.toUpperCase()} ${leverage}x`}

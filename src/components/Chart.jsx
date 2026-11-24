@@ -52,11 +52,11 @@ export default function Chart() {
       if (quote.side === 'buy') {
         const spend = Number(s.spotDraft.spend)
         if (!spend || spend <= 0) { s.setOrderError('Set jumlah beli di panel Spot dulu.'); setQuote(null); return }
-        s.spotLimit({ side: 'buy', price, spend })
+        s.spotLimit({ side: 'buy', price, spend, visible: s.spotDraft.visible })
       } else {
         const qty = Number(s.spotDraft.qty)
         if (!qty || qty <= 0) { s.setOrderError('Set jumlah jual di panel Spot dulu.'); setQuote(null); return }
-        s.spotLimit({ side: 'sell', price, qty })
+        s.spotLimit({ side: 'sell', price, qty, visible: s.spotDraft.visible })
       }
       setQuote(null)
       return
@@ -66,7 +66,7 @@ export default function Chart() {
     else {
       const m = Number(s.orderDraft.margin)
       if (!m || m <= 0) return s.setOrderError('Set margin dulu di panel order.')
-      s.placeLimit({ side: quote.side, leverage: s.orderDraft.leverage, margin: m, price: roundDp(quote.price) })
+      s.placeLimit({ side: quote.side, leverage: s.orderDraft.leverage, margin: m, price: roundDp(quote.price), visible: s.orderDraft.visible })
     }
     setQuote(null)
   }
@@ -299,7 +299,7 @@ export default function Chart() {
 
     // --- resting limit orders: one draggable price line per order -----------
     const lineTitle = (o) =>
-      `${o.side === 'long' ? 'LIMIT BUY' : 'LIMIT SELL'}${o.filled > 1e-6 ? ` ${Math.round((o.filled / o.qty) * 100)}%` : ' ⇕'}`
+      `${o.visFrac > 0 ? 'ICEBERG' : 'LIMIT'} ${o.side === 'long' ? 'BUY' : 'SELL'}${o.filled > 1e-6 ? ` ${Math.round((o.filled / o.qty) * 100)}%` : ' ⇕'}`
     const drawLimits = (orders) => {
       const list = orders || []
       const ids = new Set(list.map((o) => o.id))

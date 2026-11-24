@@ -138,6 +138,7 @@ export class Market {
     this.dp = cfg.dp
     this.volScale = cfg.vol || 1
     this.supply = cfg.supply || 0 // circulating coins (for market cap)
+    this.totalSupply = cfg.total || 0 // total / max supply (for FDV), 0 = uncapped
     this.seedPrice = cfg.price
     this.kind = cfg.kind || 'perp'
     this.isPerp = this.kind === 'perp'
@@ -646,7 +647,14 @@ export class Market {
     for (const b of this.books.values()) {
       for (const o of b.pendingOrders) {
         const rem = o.qty - o.filled
-        if (rem > 1e-9) out.push({ p: this.r(o.price), s: o.side === 'long' ? 1 : 0, q: this.rq(rem) })
+        if (rem <= 1e-9) continue
+        // an iceberg order shows only its tip; the rest stays hidden but still
+        // fills (and holds price) at that level as the tip is eaten and refilled
+        // (the tip never drops below the quantity precision, or it would vanish)
+        const shown = o.visFrac > 0 ? Math.min(rem, Math.max(o.qty * o.visFrac, 1e-6)) : rem
+        const q = this.rq(shown)
+        if (q <= 0) continue
+        out.push({ p: this.r(o.price), s: o.side === 'long' ? 1 : 0, q })
       }
     }
     return out
@@ -993,7 +1001,7 @@ export class Market {
   // compact ticker for the markets list / top bar
   ticker() {
     return {
-      symbol: this.symbol, mode: this.kind, name: this.name, base: this.baseAsset, dp: this.dp, supply: this.supply,
+      symbol: this.symbol, mode: this.kind, name: this.name, base: this.baseAsset, dp: this.dp, supply: this.supply, total: this.totalSupply,
       price: this.r(this.price), change: Math.round(this.change24h() * 100) / 100,
       spark: this.spark(),
     }

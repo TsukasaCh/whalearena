@@ -6,6 +6,13 @@ export { depthFor }
 const round = (n) => Math.round(n * 100) / 100
 const r8 = (n) => Math.round(n * 1e8) / 1e8 // coin precision for staking (keep tiny rewards)
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
+// Iceberg limit orders: `visible` is the fraction of the order shown on the book
+// (the "tip"). Anything that is not a number strictly between 0 and 1 means a
+// normal, fully visible limit order.
+const icebergFrac = (visible) => {
+  const v = +visible
+  return v > 0 && v < 1 ? clamp(v, 0.01, 0.5) : undefined
+}
 
 // Algo (TWAP / VWAP) order limits
 const ALGO_MIN_SEC = 30
@@ -387,13 +394,14 @@ export class MarketHub {
   // Buy (side long) reserves USDT off the balance; sell (side short) moves the
   // coins out of the holding into the order. Both rest in the spot book and fill
   // like any limit — delivered via spotFill() when price crosses or a taker hits.
-  spotLimit(id, symbol, { side, price, spend, qty }) {
+  spotLimit(id, symbol, { side, price, spend, qty, visible }) {
     const u = this.users.get(id)
     const m = this.market(symbol, 'spot')
     if (!u || !m) return { ok: false, error: 'No session' }
     price = +price
     if (!price || price <= 0) return { ok: false, error: 'Harga limit tidak valid' }
     const oid = 's' + Math.random().toString(36).slice(2, 9)
+    const visFrac = icebergFrac(visible)
     if (side === 'buy') {
       if (price >= m.price) return { ok: false, error: 'Limit buy harus DI BAWAH harga pasar' }
       spend = +spend
@@ -401,7 +409,7 @@ export class MarketHub {
       const fee = round(spend * MAKER_FEE)
       if (spend + fee > u.balance) return { ok: false, error: 'Saldo tidak cukup (jumlah + fee maker)' }
       u.balance = round(u.balance - spend - fee)
-      m.book(id).pendingOrders.push({ id: oid, spot: true, side: 'long', price: m.r(price), qty: m.rq(spend / price), filled: 0, fee, reservedUsd: round(spend + fee) })
+      m.book(id).pendingOrders.push({ id: oid, spot: true, side: 'long', price: m.r(price), qty: m.rq(spend / price), filled: 0, fee, reservedUsd: round(spend + fee), visFrac })
       this.dirty.add(id)
       return { ok: true, user: u, symbol, event: { type: 'spotLimitPlaced', symbol, side: 'buy', price: m.r(price), id: Date.now() } }
     }
@@ -418,7 +426,7 @@ export class MarketHub {
       h.cost = round(h.cost - costBasis)
       if (h.qty <= 1e-9) delete u.spot[symbol]
       else u.spot[symbol] = h
-      m.book(id).pendingOrders.push({ id: oid, spot: true, side: 'short', price: m.r(price), qty: m.rq(qty), filled: 0, costBasis })
+      m.book(id).pendingOrders.push({ id: oid, spot: true, side: 'short', price: m.r(price), qty: m.rq(qty), filled: 0, costBasis, visFrac })
       this.dirty.add(id)
       return { ok: true, user: u, symbol, event: { type: 'spotLimitPlaced', symbol, side: 'sell', price: m.r(price), id: Date.now() } }
     }
@@ -545,7 +553,7 @@ export class MarketHub {
     return { ok: true, user: u, symbol, event: { type: 'staked', symbol, qty: r8(qty), action: 'unstake', id: Date.now() } }
   }
 
-  placeLimit(id, symbol, { side, leverage, margin, price, sl, tp }) {
+  placeLimit(id, symbol, { side, leverage, margin, price, sl, tp, visible }) {
     const u = this.users.get(id)
     const m = this.markets.get(symbol)
     if (!u || !m) return { ok: false, error: 'No session' }
@@ -575,7 +583,7 @@ export class MarketHub {
     const fee = round(margin * leverage * MAKER_FEE)
     u.balance = round(u.balance - margin - fee)
     const oid = 'o' + Math.random().toString(36).slice(2, 9)
-    book.pendingOrders.push({ id: oid, side, leverage, margin, fee, price: m.r(price), sl: cleanSl, tp: cleanTp, qty: m.rq(qtyFromMargin(margin, leverage, price)), filled: 0 })
+    book.pendingOrders.push({ id: oid, side, leverage, margin, fee, price: m.r(price), sl: cleanSl, tp: cleanTp, qty: m.rq(qtyFromMargin(margin, leverage, price)), filled: 0, visFrac: icebergFrac(visible) })
     this.dirty.add(id)
     return { ok: true, user: u, symbol }
   }

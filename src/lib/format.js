@@ -29,6 +29,11 @@ export const marketCap = (m) => {
   const px = m?.spot ?? m?.price
   return m?.supply > 0 && px > 0 ? px * m.supply : null
 }
+// Fully diluted value = spot price × total supply (null when the coin is uncapped).
+export const fdv = (m) => {
+  const px = m?.spot ?? m?.price
+  return m?.total > 0 && px > 0 ? px * m.total : null
+}
 // "$1.26T" / "$84.3B" / "$500.0M"
 export const usdCompact = (n) => (n == null ? '—' : '$' + compact(n))
 
