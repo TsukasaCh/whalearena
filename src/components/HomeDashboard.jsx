@@ -4,6 +4,7 @@ import { useAuth } from '../store/useAuth'
 import { unrealizedPnl, roe } from '../lib/trading'
 import { usd, fmt, fmtPrice, fmtQty, pct, signedUsd } from '../lib/format'
 import ShareCard from './ShareCard'
+import { CoinIcon } from './ui'
 
 const STARTING = 10000
 
@@ -65,127 +66,90 @@ export default function HomeDashboard({ onEnter }) {
   const shareTrade = (h) =>
     setShare({ mode: 'position', symbol: h.symbol, side: h.side, leverage: h.leverage, entry: h.entry, exit: h.exit, dp: metaOf(h.symbol).dp ?? 2, roe: roe(h.pnl, h.margin), pnl: h.pnl, closed: true })
 
+  const futuresValue = equity - balance - spotValue - stakedValue // margin + uPnL + resting limits
+  const totalPct = (totalPnl / STARTING) * 100
+  const sideBadge = (long) => `rounded px-1.5 py-0.5 text-[11px] font-semibold ${long ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`
+
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        {/* header */}
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-xs uppercase tracking-widest text-sub">Welcome back</div>
-            <h1 className="text-2xl font-extrabold text-txt">
-              {name} <span className="text-sub">👋</span>
-            </h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={shareAccount}
-              className="rounded-lg border border-gold/40 bg-gold/10 px-4 py-2.5 text-sm font-bold text-gold hover:bg-gold/20"
-            >
-              🚀 Flex PnL
-            </button>
-            <button
-              onClick={() => onEnter('spot')}
-              className="rounded-lg border border-accent/40 bg-accent/10 px-4 py-2.5 text-sm font-bold text-accent hover:bg-accent/20"
-            >
-              💰 Spot
-            </button>
-            <button
-              onClick={() => onEnter('perp')}
-              className="rounded-lg bg-accent px-5 py-2.5 text-sm font-bold text-white hover:brightness-110"
-            >
-              ⚡ Perps
-            </button>
-          </div>
-        </div>
-
-        {/* stat cards */}
-        <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Card label="Equity · total assets" value={usd(equity)} sub={`Available ${usd(balance)}`} />
-          <Card label="Total PnL" value={signedUsd(totalPnl)} sub={pct((totalPnl / STARTING) * 100)} tone={totalPnl >= 0 ? 'up' : 'down'} />
-          <Card label="Realized PnL" value={signedUsd(stats.realized || 0)} tone={(stats.realized || 0) >= 0 ? 'up' : 'down'} />
-          <Card label="Win Rate" value={stats.trades ? `${fmt(winRate, 0)}%` : '—'} sub={`${stats.wins}/${stats.trades} trades`} />
-        </div>
-
+      <div className="mx-auto max-w-[1280px] px-3 py-5 sm:px-6 sm:py-8">
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {/* left column: markets + leaderboard */}
-          <div className="space-y-4 lg:col-span-1">
-            <Panel title="Markets" right={<span className="text-[10px] text-sub">{symbols.length} pairs</span>}>
-              <div className="max-h-[360px] space-y-0.5 overflow-y-auto pr-1">
-                {symbols.map((m) => (
-                  <button
-                    key={m.symbol}
-                    onClick={() => openMarket(m.symbol)}
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-panel2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-xs font-bold text-txt">{m.symbol}<span className="font-normal text-sub">/USDT</span></div>
-                      <div className="truncate text-[10px] text-sub">{m.name}</div>
-                    </div>
-                    <Spark data={m.spark} up={(m.change ?? 0) >= 0} />
-                    <div className="w-24 text-right">
-                      <div className="font-mono text-xs text-txt">{fmtPrice(m.price, m.dp)}</div>
-                      <div className={`font-mono text-[10px] ${(m.change ?? 0) >= 0 ? 'text-up' : 'text-down'}`}>{pct(m.change ?? 0)}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </Panel>
-
-            <Panel title="🏆 Leaderboard" right={<span className="text-[10px] text-sub">by equity</span>}>
-              {leaderboard.length === 0 ? (
-                <Empty>No traders yet</Empty>
-              ) : (
-                <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
-                  {leaderboard.map((r, i) => {
-                    const me = !r.bot && r.name.toLowerCase() === name.toLowerCase()
-                    return (
-                      <div key={r.name + '-' + i} className={`flex items-center justify-between rounded px-2.5 py-1.5 text-xs ${me ? 'bg-accent/15 ring-1 ring-accent/40' : 'bg-panel2/50'}`}>
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="w-5 shrink-0 text-right font-mono text-sub">{i + 1}</span>
-                          <span className={`truncate font-semibold ${me ? 'text-accent' : 'text-txt'}`}>{r.name}</span>
-                          {r.bot ? (
-                            <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-bold ${r.side === 'long' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>{r.symbol} {r.side === 'long' ? 'L' : 'S'}{r.lev}x</span>
-                          ) : r.online ? (
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-up" title="online" />
-                          ) : null}
-                        </span>
-                        <span className="flex shrink-0 items-center gap-3 font-mono">
-                          {r.bot || r.pnl ? <span className={r.pnl >= 0 ? 'text-up' : 'text-down'}>{signedUsd(r.pnl)}</span> : null}
-                          <span className="w-20 text-right text-txt">{usd(r.equity, 0)}</span>
-                        </span>
-                      </div>
-                    )
-                  })}
+          {/* ───────── left: overview, portfolio, books ───────── */}
+          <div className="min-w-0 space-y-4 lg:col-span-2">
+            {/* estimated total value */}
+            <div className="card p-5 sm:p-7">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm text-sub">
+                    Estimated total value · <span className="text-txt">{name}</span>
+                  </div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className="font-mono text-4xl font-semibold tracking-tight text-txt">{fmt(equity)}</span>
+                    <span className="text-sm font-medium text-sub">USD</span>
+                  </div>
+                  <div className="mt-2 text-sm">
+                    <span className="border-b border-dashed border-sub/50 text-sub" title={`Sejak modal awal ${usd(STARTING, 0)}`}>
+                      Total PnL
+                    </span>{' '}
+                    <span className={`font-mono ${totalPnl >= 0 ? 'text-up' : 'text-down'}`}>
+                      {signedUsd(totalPnl)} ({pct(totalPct)})
+                    </span>
+                  </div>
                 </div>
-              )}
-            </Panel>
-          </div>
+                <div className="grid grid-cols-3 gap-5 text-right sm:gap-8">
+                  <MiniStat label="Realized PnL" value={signedUsd(stats.realized || 0)} tone={(stats.realized || 0) >= 0 ? 'up' : 'down'} />
+                  <MiniStat label="Win rate" value={stats.trades ? `${fmt(winRate, 0)}%` : '—'} />
+                  <MiniStat label="Trades" value={`${stats.wins}/${stats.trades}`} />
+                </div>
+              </div>
+              <div className="mt-6 flex flex-wrap items-center gap-2">
+                <button onClick={() => onEnter('perp')} className="btn btn-primary px-6">Trade futures</button>
+                <button onClick={() => onEnter('spot')} className="btn btn-ghost px-6">Spot</button>
+                <button onClick={shareAccount} className="btn btn-ghost px-6">🚀 Flex PnL</button>
+              </div>
+            </div>
 
-          {/* right column: positions, pending, recent trades */}
-          <div className="space-y-4 lg:col-span-2">
-            <Panel title="Open Positions" right={<span className="text-[10px] text-sub">{positions.length} open</span>}>
+            {/* portfolio */}
+            <div className="card p-5 sm:p-7">
+              <h2 className="mb-4 text-lg font-semibold text-txt">Portfolio</h2>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <Tile label="Available" value={usd(balance)} hint="Free balance" />
+                <Tile label="Futures" value={usd(futuresValue)} hint={`${positions.length} open · ${pending.length} resting`} onClick={() => onEnter('perp')} />
+                <Tile label="Spot" value={usd(spotValue)} hint={`${holdings.length} coin${holdings.length === 1 ? '' : 's'}`} onClick={() => onEnter('spot')} />
+                <Tile label="Earn" value={usd(stakedValue)} hint={`${(STAKE_APY * 100).toFixed(0)}% APY staking`} onClick={() => onEnter('spot')} />
+              </div>
+            </div>
+
+            {/* open positions */}
+            <Panel title="Open positions" right={`${positions.length} open`}>
               {positions.length === 0 ? (
-                <Empty>No open positions · <button onClick={() => onEnter()} className="font-semibold text-accent hover:underline">open a trade →</button></Empty>
+                <Empty>No open positions · <button onClick={() => onEnter()} className="font-semibold text-txt underline-offset-2 hover:underline">open a trade →</button></Empty>
               ) : (
-                <div className="space-y-1.5">
+                <div className="divide-y divide-border">
                   {positions.map((p) => {
                     const mark = metaOf(p.symbol).price ?? p.entry
                     const dp = metaOf(p.symbol).dp ?? 2
                     const upnl = unrealizedPnl({ side: p.side, entry: p.entry, price: mark, qty: p.qty })
                     const r = roe(upnl, p.margin)
                     return (
-                      <div key={p.symbol} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-panel2/50 px-3 py-2">
-                        <button onClick={() => openMarket(p.symbol)} className="flex items-center gap-2 text-left">
-                          <span className={`rounded px-2 py-0.5 text-xs font-bold ${p.side === 'long' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>{p.symbol} {p.side === 'long' ? 'LONG' : 'SHORT'} {p.leverage}x</span>
-                          <span className="font-mono text-[11px] text-sub">entry {fmtPrice(p.entry, dp)} · liq <span className="text-down">{fmtPrice(p.liq, dp)}</span></span>
+                      <div key={p.symbol} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                        <button onClick={() => openMarket(p.symbol)} className="flex min-w-0 items-center gap-3 text-left">
+                          <CoinIcon symbol={p.symbol} size={32} />
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-txt">{p.symbol}USDT</span>
+                              <span className={sideBadge(p.side === 'long')}>{p.side === 'long' ? 'Long' : 'Short'} {p.leverage}x</span>
+                            </span>
+                            <span className="mt-0.5 block font-mono text-xs text-sub">Entry {fmtPrice(p.entry, dp)} · Liq <span className="text-down">{fmtPrice(p.liq, dp)}</span></span>
+                          </span>
                         </button>
                         <div className="flex items-center gap-3">
                           <div className="text-right">
-                            <div className={`font-mono text-sm font-bold ${upnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(upnl)}</div>
-                            <div className={`font-mono text-[10px] ${upnl >= 0 ? 'text-up' : 'text-down'}`}>{pct(r)} ROE</div>
+                            <div className={`font-mono text-sm font-semibold ${upnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(upnl)}</div>
+                            <div className={`font-mono text-xs ${upnl >= 0 ? 'text-up' : 'text-down'}`}>{pct(r)} ROE</div>
                           </div>
-                          <button onClick={() => sharePosition(p)} title="Flex this position" className="rounded-md bg-gold/15 px-2 py-1 text-xs font-bold text-gold hover:bg-gold/25">🚀</button>
-                          <button onClick={() => openMarket(p.symbol)} className="rounded-md bg-panel2 px-2.5 py-1 text-xs font-semibold text-txt hover:bg-border">Manage →</button>
+                          <button onClick={() => sharePosition(p)} title="Flex this position" className="btn btn-ghost btn-sm !px-2.5">🚀</button>
+                          <button onClick={() => openMarket(p.symbol)} className="btn btn-ghost btn-sm">Manage</button>
                         </div>
                       </div>
                     )
@@ -194,26 +158,30 @@ export default function HomeDashboard({ onEnter }) {
               )}
             </Panel>
 
-            <Panel title="💰 Spot Holdings" right={<span className="text-[10px] text-sub">{holdings.length ? usd(spotValue) : `${holdings.length} coins`}</span>}>
+            {/* spot holdings */}
+            <Panel title="Spot holdings" right={holdings.length ? usd(spotValue) : `${holdings.length} coins`}>
               {holdings.length === 0 ? (
-                <Empty>No coins held · <button onClick={() => onEnter('spot')} className="font-semibold text-accent hover:underline">buy spot →</button></Empty>
+                <Empty>No coins held · <button onClick={() => onEnter('spot')} className="font-semibold text-txt underline-offset-2 hover:underline">buy spot →</button></Empty>
               ) : (
-                <div className="space-y-1.5">
+                <div className="divide-y divide-border">
                   {holdings.map((h) => {
                     const dp = metaOf(h.symbol).dp ?? 2
                     const r = h.cost ? (h.pnl / h.cost) * 100 : 0
                     return (
-                      <div key={h.symbol} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-panel2/50 px-3 py-2">
-                        <button onClick={() => openMarket(h.symbol, 'spot')} className="flex items-center gap-2 text-left">
-                          <span className="rounded bg-accent/15 px-2 py-0.5 text-xs font-bold text-accent">{h.symbol} SPOT</span>
-                          <span className="font-mono text-[11px] text-sub">{fmtQty(h.qty)} · avg {fmtPrice(h.avg, dp)}</span>
+                      <div key={h.symbol} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                        <button onClick={() => openMarket(h.symbol, 'spot')} className="flex min-w-0 items-center gap-3 text-left">
+                          <CoinIcon symbol={h.symbol} size={32} />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-txt">{h.symbol}</span>
+                            <span className="mt-0.5 block font-mono text-xs text-sub">{fmtQty(h.qty)} · avg {fmtPrice(h.avg, dp)}</span>
+                          </span>
                         </button>
                         <div className="flex items-center gap-3">
                           <div className="text-right">
-                            <div className="font-mono text-sm font-bold text-txt">{usd(h.value)}</div>
-                            <div className={`font-mono text-[10px] ${h.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(h.pnl)} · {pct(r)}</div>
+                            <div className="font-mono text-sm font-semibold text-txt">{usd(h.value)}</div>
+                            <div className={`font-mono text-xs ${h.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(h.pnl)} · {pct(r)}</div>
                           </div>
-                          <button onClick={() => openMarket(h.symbol, 'spot')} className="rounded-md bg-panel2 px-2.5 py-1 text-xs font-semibold text-txt hover:bg-border">Trade →</button>
+                          <button onClick={() => openMarket(h.symbol, 'spot')} className="btn btn-ghost btn-sm">Trade</button>
                         </div>
                       </div>
                     )
@@ -222,38 +190,49 @@ export default function HomeDashboard({ onEnter }) {
               )}
             </Panel>
 
-            <Panel title={`🔒 Staking · ${(STAKE_APY * 100).toFixed(0)}% APY`} right={<span className="text-[10px] text-sub">{stakes.length ? usd(stakedValue) : '—'}</span>}>
+            {/* staking */}
+            <Panel title={`Staking · ${(STAKE_APY * 100).toFixed(0)}% APY`} right={stakes.length ? usd(stakedValue) : '—'}>
               {stakes.length === 0 ? (
-                <Empty>No coins staked · <button onClick={() => onEnter('spot')} className="font-semibold text-accent hover:underline">stake spot coins →</button></Empty>
+                <Empty>No coins staked · <button onClick={() => onEnter('spot')} className="font-semibold text-txt underline-offset-2 hover:underline">stake spot coins →</button></Empty>
               ) : (
-                <div className="space-y-1.5">
+                <div className="divide-y divide-border">
                   {stakes.map((x) => (
-                    <div key={x.symbol} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-panel2/50 px-3 py-2">
-                      <button onClick={() => openMarket(x.symbol, 'spot')} className="flex items-center gap-2 text-left">
-                        <span className="rounded bg-up/15 px-2 py-0.5 text-xs font-bold text-up">{x.symbol} STAKED</span>
-                        <span className="font-mono text-[11px] text-sub">{fmtQty(x.qty)} · +{fmtQty(x.earned)} earned</span>
+                    <div key={x.symbol} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                      <button onClick={() => openMarket(x.symbol, 'spot')} className="flex min-w-0 items-center gap-3 text-left">
+                        <CoinIcon symbol={x.symbol} size={32} />
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-txt">{x.symbol}</span>
+                            <span className="rounded bg-up/15 px-1.5 py-0.5 text-[11px] font-semibold text-up">Staked</span>
+                          </span>
+                          <span className="mt-0.5 block font-mono text-xs text-sub">{fmtQty(x.qty)} · <span className="text-up">+{fmtQty(x.earned)}</span> earned</span>
+                        </span>
                       </button>
-                      <div className="font-mono text-sm font-bold text-txt">{usd(x.value)}</div>
+                      <div className="font-mono text-sm font-semibold text-txt">{usd(x.value)}</div>
                     </div>
                   ))}
                 </div>
               )}
             </Panel>
 
-            <Panel title="⏳ Pending Limit Orders" right={<span className="text-[10px] text-sub">{pending.length} resting</span>}>
+            {/* pending limit orders */}
+            <Panel title="Pending limit orders" right={`${pending.length} resting`}>
               {pending.length === 0 ? (
                 <Empty>No resting limit orders</Empty>
               ) : (
-                <div className="space-y-1">
+                <div className="divide-y divide-border">
                   {pending.map((o) => {
                     const dp = metaOf(o.symbol).dp ?? 2
                     const part = o.filled > 1e-9
                     return (
-                      <div key={o.symbol + o.id} className="flex items-center justify-between gap-2 rounded bg-panel2/50 px-3 py-1.5 font-mono text-xs">
-                        <span className={`rounded px-2 py-0.5 text-[11px] font-bold ${o.side === 'long' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>{o.symbol} {o.side === 'long' ? 'BUY' : 'SELL'} {o.leverage}x</span>
-                        <span className="text-accent">@ {fmtPrice(o.price, dp)}</span>
-                        <span className="text-[10px] text-sub">{usd(o.margin)}{part ? ` · ${Math.round((o.filled / o.qty) * 100)}%` : ''}</span>
-                        <button onClick={() => cancelOrder(o.symbol, o.id)} className="rounded bg-panel2 px-2 py-0.5 text-[10px] font-semibold text-txt hover:text-down">✕ Cancel</button>
+                      <div key={o.symbol + o.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5 text-xs">
+                        <span className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-txt">{o.symbol}USDT</span>
+                          <span className={sideBadge(o.side === 'long')}>{o.side === 'long' ? 'Buy' : 'Sell'} {o.leverage}x</span>
+                        </span>
+                        <span className="font-mono text-txt">@ {fmtPrice(o.price, dp)}</span>
+                        <span className="font-mono text-sub">{usd(o.margin)}{part ? ` · ${Math.round((o.filled / o.qty) * 100)}%` : ''}</span>
+                        <button onClick={() => cancelOrder(o.symbol, o.id)} className="btn btn-outline btn-sm hover:!border-down hover:text-down">Cancel</button>
                       </div>
                     )
                   })}
@@ -261,34 +240,111 @@ export default function HomeDashboard({ onEnter }) {
               )}
             </Panel>
 
-            <Panel title="Recent Trades" right={<span className="text-[10px] text-sub">last {Math.min(history.length, 12)}</span>}>
+            {/* markets */}
+            <Panel title="Markets" right={`${symbols.length} pairs`}>
+              <div className="-mx-2">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_7rem] items-center gap-3 px-2 pb-1 text-xs text-sub sm:grid-cols-[minmax(0,1.4fr)_5rem_7rem_5rem_auto]">
+                  <span>Name</span>
+                  <span className="hidden sm:block" />
+                  <span className="text-right">Last price</span>
+                  <span className="hidden text-right sm:block">Change</span>
+                  <span className="hidden w-[68px] sm:block" />
+                </div>
+                {symbols.map((m) => {
+                  const up = (m.change ?? 0) >= 0
+                  return (
+                    <div
+                      key={m.symbol}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openMarket(m.symbol)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') openMarket(m.symbol) }}
+                      className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto_7rem] items-center gap-3 rounded-xl px-2 py-2.5 hover:bg-panel2 sm:grid-cols-[minmax(0,1.4fr)_5rem_7rem_5rem_auto]"
+                    >
+                      <span className="flex min-w-0 items-center gap-3">
+                        <CoinIcon symbol={m.symbol} size={32} />
+                        <span className="min-w-0 leading-tight">
+                          <span className="block truncate text-sm font-semibold text-txt">{m.symbol}<span className="font-normal text-sub">/USDT</span></span>
+                          <span className="block truncate text-xs text-sub">{m.name}</span>
+                        </span>
+                      </span>
+                      <Spark data={m.spark} up={up} />
+                      <span className="text-right leading-tight">
+                        <span className="block font-mono text-sm text-txt">{fmtPrice(m.price, m.dp)}</span>
+                        <span className={`block font-mono text-xs sm:hidden ${up ? 'text-up' : 'text-down'}`}>{pct(m.change ?? 0)}</span>
+                      </span>
+                      <span className={`hidden text-right font-mono text-sm sm:block ${up ? 'text-up' : 'text-down'}`}>{pct(m.change ?? 0)}</span>
+                      <span className="hidden sm:block">
+                        <span className="btn btn-ghost btn-sm">Trade</span>
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </Panel>
+          </div>
+
+          {/* ───────── right: activity + leaderboard ───────── */}
+          <div className="min-w-0 space-y-4">
+            <Panel title="Recent trades" right={`last ${Math.min(history.length, 12)}`}>
               {history.length === 0 ? (
                 <Empty>No closed trades yet</Empty>
               ) : (
-                <div className="space-y-1">
+                <div className="divide-y divide-border">
                   {history.slice(0, 12).map((h, i) => {
                     const dp = metaOf(h.symbol).dp ?? 2
                     const spotTrade = h.kind === 'spot'
                     return (
-                      <div key={i} className="flex items-center justify-between gap-2 rounded bg-panel2/50 px-3 py-1.5 font-mono text-xs">
-                        <span className="flex items-center gap-2">
-                          <span className="w-12 font-bold text-txt">{h.symbol}</span>
-                          {spotTrade ? (
-                            <span className="text-accent">SPOT SELL</span>
-                          ) : (
-                            <span className={h.side === 'long' ? 'text-up' : 'text-down'}>{h.side === 'long' ? 'LONG' : 'SHORT'} {h.leverage}x</span>
+                      <div key={i} className="flex items-center justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-sm font-medium text-txt">
+                            <span>{h.symbol}</span>
+                            {spotTrade ? (
+                              <span className="rounded bg-panel2 px-1.5 py-0.5 text-[11px] font-semibold text-sub">Spot sell</span>
+                            ) : (
+                              <span className={sideBadge(h.side === 'long')}>{h.side === 'long' ? 'Long' : 'Short'} {h.leverage}x</span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 truncate font-mono text-xs text-sub">
+                            {spotTrade ? `${fmtQty(h.qty)} @ ${fmtPrice(h.price, dp)}` : `${fmtPrice(h.entry, dp)} → ${fmtPrice(h.exit, dp)}`} · {reasonLabel(h.reason)}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className={`font-mono text-sm font-medium ${h.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(h.pnl)}</span>
+                          {!spotTrade && (
+                            <button onClick={() => shareTrade(h)} title="Flex this trade" className="rounded-full p-1 text-sm opacity-70 hover:bg-panel2 hover:opacity-100">🚀</button>
                           )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Panel>
+
+            <Panel title="Leaderboard" right="by equity">
+              {leaderboard.length === 0 ? (
+                <Empty>No traders yet</Empty>
+              ) : (
+                <div className="-mx-2 max-h-[30rem] overflow-y-auto">
+                  {leaderboard.map((r, i) => {
+                    const me = !r.bot && r.name.toLowerCase() === name.toLowerCase()
+                    return (
+                      <div key={r.name + '-' + i} className={`flex items-center justify-between gap-2 rounded-xl px-2 py-2 text-[13px] ${me ? 'bg-panel2' : ''}`}>
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <span className={`w-5 shrink-0 text-center font-mono text-xs ${i < 3 ? 'font-bold text-gold' : 'text-sub'}`}>{i + 1}</span>
+                          <span className="truncate font-medium text-txt">{r.name}</span>
+                          {me && <span className="shrink-0 rounded bg-txt px-1.5 py-0.5 text-[10px] font-bold text-black">You</span>}
+                          {r.bot ? (
+                            <span className={`shrink-0 ${sideBadge(r.side === 'long')} !text-[10px]`}>{r.symbol} {r.side === 'long' ? 'L' : 'S'}{r.lev}x</span>
+                          ) : r.online ? (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-up" title="online" />
+                          ) : null}
                         </span>
-                        <span className="hidden text-[10px] text-sub sm:inline">
-                          {spotTrade ? `${fmtQty(h.qty)} @ ${fmtPrice(h.price, dp)}` : `${fmtPrice(h.entry, dp)} → ${fmtPrice(h.exit, dp)}`}
+                        <span className="shrink-0 text-right leading-tight">
+                          <span className="block font-mono text-txt">{usd(r.equity, 0)}</span>
+                          {r.bot || r.pnl ? <span className={`block font-mono text-[11px] ${r.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(r.pnl)}</span> : null}
                         </span>
-                        <span className="text-[10px] text-sub">{reasonLabel(h.reason)}</span>
-                        <span className={`w-24 text-right ${h.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(h.pnl)}</span>
-                        {spotTrade ? (
-                          <span className="w-4" />
-                        ) : (
-                          <button onClick={() => shareTrade(h)} title="Flex this trade" className="text-gold hover:brightness-125">🚀</button>
-                        )}
                       </div>
                     )
                   })}
@@ -306,39 +362,52 @@ export default function HomeDashboard({ onEnter }) {
 
 function Panel({ title, right, children }) {
   return (
-    <div className="rounded-lg border border-border bg-panel p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-sub">{title}</span>
-        {right}
+    <div className="card p-5 sm:p-6">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h2 className="text-base font-semibold text-txt">{title}</h2>
+        {right != null && <span className="font-mono text-xs text-sub">{right}</span>}
       </div>
       {children}
     </div>
   )
 }
 function Empty({ children }) {
-  return <div className="py-6 text-center text-sm text-sub/60">{children}</div>
+  return <div className="py-8 text-center text-sm text-sub">{children}</div>
 }
-function Card({ label, value, sub, tone = 'neutral' }) {
+function MiniStat({ label, value, tone = 'neutral' }) {
   const color = tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-txt'
   return (
-    <div className="rounded-lg border border-border bg-panel p-3">
-      <div className="text-[10px] uppercase tracking-wide text-sub">{label}</div>
-      <div className={`font-mono text-xl font-bold ${color}`}>{value}</div>
-      {sub && <div className={`font-mono text-[11px] ${color}`}>{sub}</div>}
+    <div>
+      <div className="whitespace-nowrap text-xs text-sub">{label}</div>
+      <div className={`mt-1 whitespace-nowrap font-mono text-sm font-semibold ${color}`}>{value}</div>
     </div>
+  )
+}
+// portfolio tile (account bucket)
+function Tile({ label, value, hint, onClick }) {
+  const Tag = onClick ? 'button' : 'div'
+  return (
+    <Tag
+      onClick={onClick}
+      className={`rounded-xl bg-panel2/60 p-4 text-left transition-colors ${onClick ? 'hover:bg-panel2' : ''}`}
+    >
+      <div className="text-sm text-sub">{label}</div>
+      <div className="mt-3 font-mono text-lg font-semibold text-txt">{value}</div>
+      {hint && <div className="mt-0.5 truncate text-xs text-sub">{hint}</div>}
+    </Tag>
   )
 }
 
 // tiny inline sparkline
 function Spark({ data, up }) {
-  if (!data || data.length < 2) return <div className="w-14" />
-  const w = 56, h = 22
+  if (!data || data.length < 2) return <div className="hidden w-20 sm:block" />
+  const w = 80, h = 28
   const min = Math.min(...data), max = Math.max(...data)
   const span = max - min || 1
-  const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / span) * h}`).join(' ')
+  const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${1 + (h - 2) - ((v - min) / span) * (h - 2)}`).join(' ')
   return (
-    <svg width={w} height={h} className="shrink-0">
-      <polyline points={pts} fill="none" stroke={up ? '#00E676' : '#FF5252'} strokeWidth="1.5" />
+    <svg width={w} height={h} className="hidden shrink-0 sm:block">
+      <polyline points={pts} fill="none" stroke={up ? '#25a750' : '#ca3f64'} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   )
 }

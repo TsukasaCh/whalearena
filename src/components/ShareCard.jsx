@@ -38,29 +38,34 @@ export default function ShareCard({ share, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-panel p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm font-bold text-txt">Share your PnL 🚀</span>
-          <button onClick={onClose} className="rounded p-1 text-sub hover:text-txt">✕</button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl border border-white/5 bg-panel2 p-5 shadow-[0_24px_64px_rgba(0,0,0,0.7)]" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between">
+          <span className="text-base font-semibold text-txt">Share your PnL 🚀</span>
+          <button
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-panel3 text-xs text-sub transition-colors hover:text-txt"
+          >
+            ✕
+          </button>
         </div>
-        <div className="overflow-hidden rounded-xl">
+        <div className="overflow-hidden rounded-xl bg-black">
           {url ? (
             <img src={url} alt="PnL card" className="w-full" />
           ) : (
-            <div className="aspect-square animate-pulse bg-panel2" />
+            <div className="aspect-square animate-pulse bg-panel3" />
           )}
         </div>
         <canvas ref={canvasRef} width={1080} height={1080} className="hidden" />
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <button onClick={shareNative} className="rounded-lg bg-accent py-2.5 text-sm font-bold text-white hover:brightness-110">
-            {copied ? '✓ Copied text' : '📤 Share'}
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <button onClick={shareNative} className="btn btn-primary py-2.5">
+            {copied ? '✓ Copied text' : 'Share'}
           </button>
-          <button onClick={download} className="rounded-lg bg-panel2 py-2.5 text-sm font-bold text-txt hover:bg-border">
-            ⬇ Download PNG
+          <button onClick={download} className="btn bg-panel3 py-2.5 text-txt hover:bg-white/15">
+            Download PNG
           </button>
         </div>
-        <p className="mt-2 text-center text-[11px] text-sub/70">Educational simulator — not financial advice.</p>
+        <p className="mt-3 text-center text-[11px] text-sub">Educational simulator — not financial advice.</p>
       </div>
     </div>
   )
@@ -76,19 +81,19 @@ function draw(canvas, s) {
   const ctx = canvas.getContext('2d')
   const W = canvas.width, H = canvas.height
   const win = s.roe >= 0
-  const up = '#00E676', down = '#FF5252', gold = '#f0b90b'
+  const up = '#25a750', down = '#ca3f64', gold = '#f0b90b'
   const accent = win ? up : down
 
   // background gradient
   const bg = ctx.createLinearGradient(0, 0, W, H)
-  bg.addColorStop(0, '#0b0e11')
-  bg.addColorStop(1, win ? '#0d1f16' : '#210f11')
+  bg.addColorStop(0, '#000000')
+  bg.addColorStop(1, win ? '#0b1f12' : '#220d14')
   ctx.fillStyle = bg
   ctx.fillRect(0, 0, W, H)
 
   // subtle glow
   const glow = ctx.createRadialGradient(W * 0.5, H * 0.42, 60, W * 0.5, H * 0.42, W * 0.7)
-  glow.addColorStop(0, win ? 'rgba(0,230,118,0.16)' : 'rgba(255,82,82,0.16)')
+  glow.addColorStop(0, win ? 'rgba(37,167,80,0.20)' : 'rgba(202,63,100,0.20)')
   glow.addColorStop(1, 'rgba(0,0,0,0)')
   ctx.fillStyle = glow
   ctx.fillRect(0, 0, W, H)
@@ -97,32 +102,32 @@ function draw(canvas, s) {
   const pad = 90
 
   // header
-  ctx.fillStyle = '#eaecef'
+  ctx.fillStyle = '#f7f7f7'
   ctx.font = 'bold 52px Inter, sans-serif'
   ctx.fillText('🐋 WHALE', pad, 130)
   ctx.fillStyle = gold
   ctx.fillText(' ARENA', pad + ctx.measureText('🐋 WHALE').width, 130)
 
-  ctx.fillStyle = '#5b6673'
+  ctx.fillStyle = '#8f8f8f'
   ctx.font = '30px Inter, sans-serif'
   ctx.fillText(s.mode === 'account' ? 'PORTFOLIO PERFORMANCE' : 'PERPETUAL FUTURES', pad, 178)
 
   // pair + side pill
   if (s.mode !== 'account') {
-    ctx.fillStyle = '#eaecef'
+    ctx.fillStyle = '#f7f7f7'
     ctx.font = 'bold 84px Inter, sans-serif'
     ctx.fillText(`${s.symbol}/USDT`, pad, 320)
     // side pill
     const label = `${s.side ? s.side.toUpperCase() : ''}${s.leverage ? '  ' + s.leverage + 'x' : ''}`
     ctx.font = 'bold 40px Inter, sans-serif'
     const pw = ctx.measureText(label).width + 56
-    ctx.fillStyle = win ? 'rgba(0,230,118,0.15)' : 'rgba(255,82,82,0.15)'
+    ctx.fillStyle = win ? 'rgba(37,167,80,0.18)' : 'rgba(202,63,100,0.18)'
     roundRect(ctx, pad, 360, pw, 74, 16)
     ctx.fill()
     ctx.fillStyle = s.side === 'long' ? up : down
     ctx.fillText(label, pad + 28, 412)
   } else {
-    ctx.fillStyle = '#eaecef'
+    ctx.fillStyle = '#f7f7f7'
     ctx.font = 'bold 76px Inter, sans-serif'
     ctx.fillText('Total PnL', pad, 320)
   }
@@ -142,9 +147,9 @@ function draw(canvas, s) {
   ctx.font = '34px Inter, sans-serif'
   let y = 850
   const row = (k, v) => {
-    ctx.fillStyle = '#5b6673'
+    ctx.fillStyle = '#8f8f8f'
     ctx.fillText(k, pad, y)
-    ctx.fillStyle = '#eaecef'
+    ctx.fillStyle = '#f7f7f7'
     ctx.textAlign = 'right'
     ctx.fillText(v, W - pad, y)
     ctx.textAlign = 'left'
@@ -162,7 +167,7 @@ function draw(canvas, s) {
   ctx.strokeStyle = 'rgba(255,255,255,0.08)'
   ctx.lineWidth = 2
   ctx.beginPath(); ctx.moveTo(pad, 1000); ctx.lineTo(W - pad, 1000); ctx.stroke()
-  ctx.fillStyle = '#5b6673'
+  ctx.fillStyle = '#8f8f8f'
   ctx.font = '30px Inter, sans-serif'
   ctx.fillText('Trade the whale. Simulated futures arena.', pad, 1050)
   ctx.fillStyle = gold

@@ -35,27 +35,29 @@ export default function LiquidityMap() {
   }, [map, price])
 
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-1">
       {rows.map((r) => {
         if (r.marker) {
           return (
-            <div key={r.id} className="flex items-center gap-2 py-0.5">
-              <div className="h-px flex-1 bg-gold/50" />
-              <span className="rounded bg-gold/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-gold">
+            <div key={r.id} className="flex items-center gap-2 py-1">
+              <div className="h-px flex-1 bg-gold/40" />
+              <span className="rounded-full bg-gold/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-gold">
                 {fmtPrice(price, dp)}
               </span>
-              <div className="h-px flex-1 bg-gold/50" />
+              <div className="h-px flex-1 bg-gold/40" />
             </div>
           )
         }
         const w = ((r.weight || 0) / maxW) * 100
-        const color = r.side === 'short' ? 'bg-down/70' : 'bg-up/70'
+        const color = r.side === 'short' ? 'bg-down/45' : 'bg-up/45'
         return (
-          <div key={r.id} className={`flex items-center gap-2 rounded ${r.real ? 'ring-1 ring-accent' : ''}`}>
-            <span className="w-16 shrink-0 text-right font-mono text-[10px] text-sub">{fmtPrice(r.price, dp)}</span>
-            <div className="relative h-4 flex-1 overflow-hidden rounded bg-panel2/40">
-              <div className={`h-full ${color} transition-all`} style={{ width: `${w}%` }} />
-              <span className="absolute inset-y-0 right-1 flex items-center gap-1 font-mono text-[9px] text-txt/70">
+          <div key={r.id} className={`flex items-center gap-2 rounded-md ${r.real ? 'bg-accent/10' : ''}`}>
+            <span className={`w-16 shrink-0 text-right font-mono text-[11px] ${r.real ? 'text-accent' : 'text-sub'}`}>
+              {fmtPrice(r.price, dp)}
+            </span>
+            <div className="relative h-5 flex-1 overflow-hidden rounded-md bg-panel2">
+              <div className={`h-full rounded-md ${color} transition-all`} style={{ width: `${w}%` }} />
+              <span className="absolute inset-y-0 right-1.5 flex items-center gap-1 font-mono text-[10px] text-txt/80">
                 {r.real && <span className="text-accent">👤</span>}
                 {r.count} · ${compact(r.weight)}
               </span>
@@ -64,7 +66,7 @@ export default function LiquidityMap() {
         )
       })}
       {rows.length <= 1 && (
-        <div className="py-3 text-center text-[10px] text-sub/60">No liquidity in range</div>
+        <div className="py-4 text-center text-[11px] text-sub">No liquidity in range</div>
       )}
     </div>
   )

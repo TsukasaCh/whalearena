@@ -25,52 +25,54 @@ export default function SpotHolding() {
   const sellPct = (p) => spotSell(Math.floor(holding.qty * p * 1e6) / 1e6)
 
   return (
-    <div className="rounded-lg border border-border bg-panel p-3">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="rounded bg-accent/15 px-2 py-0.5 text-xs font-bold text-accent">
-            SPOT · {baseAsset}
+    <div className="rounded-xl bg-panel2/50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-[13px] font-semibold text-txt">SPOT · {baseAsset}</span>
+          <span className="rounded bg-panel3 px-1.5 py-0.5 text-[11px] font-medium text-sub">
+            No liquidation
           </span>
-          <span className="text-xs text-sub">No liquidation</span>
         </div>
         <button
           onClick={() => spotSell(holding.qty)}
-          className="rounded bg-down/15 px-2.5 py-1 text-xs font-semibold text-down hover:bg-down/25"
+          className="shrink-0 rounded-full bg-down/15 px-3 py-1 text-xs font-semibold text-down transition-colors hover:bg-down/25"
         >
           Sell all
         </button>
       </div>
 
-      <div className="mb-3 rounded-md bg-panel2/60 p-3 text-center">
-        <div className="text-[10px] uppercase tracking-wide text-sub">Unrealized PnL</div>
-        <div className={`font-mono text-2xl font-bold ${win ? 'text-up' : 'text-down'}`}>
-          {signedUsd(pnl)}
-        </div>
-        <div className={`font-mono text-sm font-semibold ${win ? 'text-up' : 'text-down'}`}>
-          {pct(roe)}
+      <div className="mt-3">
+        <div className="text-[11px] text-sub">Unrealized PnL</div>
+        <div className="mt-0.5 flex items-baseline gap-2">
+          <span className={`font-mono text-2xl font-semibold ${win ? 'text-up' : 'text-down'}`}>
+            {signedUsd(pnl)}
+          </span>
+          <span className={`font-mono text-[13px] font-medium ${win ? 'text-up' : 'text-down'}`}>
+            {pct(roe)}
+          </span>
         </div>
       </div>
 
-      <div className="mb-3 grid grid-cols-2 gap-y-2">
+      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2.5 border-t border-border pt-3">
         <Stat label="Free Holdings" value={`${fmtQty(holding.qty)} ${baseAsset}`} />
         <Stat label="Market Value" value={usd(value)} />
-        <Stat label="Avg Cost" value={fmtPrice(avg, dp)} valueClass="text-accent" />
+        <Stat label="Avg Cost" value={fmtPrice(avg, dp)} />
         <Stat label="Mark Price" value={fmtPrice(price, dp)} />
       </div>
 
       {inOrders > 1e-9 && (
-        <div className="mb-3 flex items-center justify-between rounded-md bg-panel2/60 px-2 py-1.5 text-[11px]">
-          <span className="text-sub">⏳ In sell orders</span>
+        <div className="mt-3 flex items-center justify-between border-t border-border pt-3 text-xs">
+          <span className="text-sub">In sell orders</span>
           <span className="font-mono text-txt">{fmtQty(inOrders)} {baseAsset}</span>
         </div>
       )}
 
-      <div className="flex gap-1">
+      <div className="mt-3 flex gap-1.5">
         {[0.25, 0.5, 1].map((p) => (
           <button
             key={p}
             onClick={() => sellPct(p)}
-            className="flex-1 rounded-md bg-panel2 py-1.5 text-xs font-semibold text-txt hover:bg-border"
+            className="flex-1 rounded-lg bg-panel3/70 py-1.5 text-xs font-medium text-txt transition-colors hover:bg-panel3"
           >
             Sell {p * 100}%
           </button>

@@ -1,20 +1,21 @@
-// Small shared presentational atoms.
+// Small shared presentational atoms (OKX-style: borderless near-black panels,
+// sentence-case grey captions, pill tabs).
 
 export function Stat({ label, value, className = '', valueClass = '' }) {
   return (
     <div className={className}>
-      <div className="text-[10px] uppercase tracking-wide text-sub">{label}</div>
-      <div className={`font-mono text-sm ${valueClass}`}>{value}</div>
+      <div className="text-[11px] text-sub">{label}</div>
+      <div className={`font-mono text-[13px] font-medium ${valueClass}`}>{value}</div>
     </div>
   )
 }
 
 export function Section({ title, right, children, className = '' }) {
   return (
-    <div className={`rounded-lg border border-border bg-panel ${className}`}>
+    <div className={`rounded-xl bg-panel2/50 ${className}`}>
       {title && (
-        <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-sub">{title}</span>
+        <div className="flex items-center justify-between px-3 pt-3">
+          <span className="text-[13px] font-semibold text-txt">{title}</span>
           {right}
         </div>
       )}
@@ -25,16 +26,31 @@ export function Section({ title, right, children, className = '' }) {
 
 export function Pill({ active, onClick, children, tone = 'neutral' }) {
   const tones = {
-    neutral: active ? 'bg-panel2 text-txt' : 'text-sub hover:text-txt',
+    neutral: active ? 'bg-panel3 text-txt' : 'text-sub hover:text-txt',
     up: active ? 'bg-up/15 text-up' : 'text-sub hover:text-txt',
     down: active ? 'bg-down/15 text-down' : 'text-sub hover:text-txt',
   }
   return (
     <button
       onClick={onClick}
-      className={`rounded px-2.5 py-1 text-xs font-semibold transition-colors ${tones[tone]}`}
+      className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${tones[tone]}`}
     >
       {children}
     </button>
+  )
+}
+
+// Round coin badge (first letters of the ticker) used next to market names.
+export function CoinIcon({ symbol = '', size = 28, className = '' }) {
+  let h = 0
+  for (let i = 0; i < symbol.length; i++) h = (h * 31 + symbol.charCodeAt(i)) % 360
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-full font-bold text-white ${className}`}
+      style={{ width: size, height: size, fontSize: Math.max(9, size * 0.36), background: `hsl(${h} 55% 42%)` }}
+      aria-hidden="true"
+    >
+      {symbol.slice(0, symbol.length > 3 ? 2 : 1).toUpperCase()}
+    </span>
   )
 }

@@ -30,30 +30,47 @@ export default function AuthGate({ role = 'trader' }) {
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-bg px-4">
-      <div className="w-full max-w-sm">
-        {/* brand */}
-        <div className="mb-6 text-center">
-          <div className="mb-1 text-4xl">{isHost ? '👑' : '🐋'}</div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-txt">
-            WHALE <span className="text-gold">ARENA</span>
-          </h1>
-          <p className="text-xs uppercase tracking-[0.3em] text-sub">
-            {isHost ? 'God Console — Admin' : 'Perp Trading Game'}
-          </p>
+    <div className="flex h-full flex-col overflow-y-auto bg-bg text-txt">
+      {/* slim top nav */}
+      <header className="shrink-0 border-b border-border">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-5 sm:px-8">
+          <div className="flex items-center gap-2">
+            <span className="text-xl leading-none">🐋</span>
+            <span className="text-[15px] font-bold tracking-tight">
+              Whale <span className="text-gold">Arena</span>
+            </span>
+          </div>
+          <button
+            onClick={() => navigate(ROUTES.landing)}
+            className="text-[13px] font-medium text-sub transition-colors hover:text-txt"
+          >
+            ← Kembali ke beranda
+          </button>
         </div>
+      </header>
 
-        <div
-          className={`rounded-xl border bg-panel p-5 shadow-2xl ${
-            isHost ? 'border-gold/40' : 'border-border'
-          }`}
-        >
-          <form onSubmit={submit} className="space-y-3">
+      <div className="flex flex-1 items-center justify-center px-4 py-10">
+        <div className="w-full max-w-md rounded-3xl bg-panel p-6 sm:p-8">
+          {/* brand */}
+          <div className="mb-7">
+            <span
+              className={`mb-4 inline-block rounded-full px-2.5 py-1 text-xs font-medium ${
+                isHost ? 'bg-gold/15 text-gold' : 'bg-panel2 text-sub'
+              }`}
+            >
+              {isHost ? 'God Console — Admin' : 'Perp Trading Game'}
+            </span>
+            <h1 className="text-3xl font-bold tracking-tight text-txt">
+              Whale <span className="text-gold">Arena</span>
+            </h1>
+          </div>
+
+          <form onSubmit={submit} className="space-y-4">
             {isHost ? (
               <>
-                <p className="text-xs leading-relaxed text-sub">
-                  Akses <b className="text-gold">God Mode</b> — kendalikan seluruh pasar.
-                  Masukkan <b>admin code</b> milik whale.
+                <p className="text-[13px] leading-relaxed text-sub">
+                  Akses <b className="font-semibold text-gold">God Mode</b> — kendalikan seluruh pasar.
+                  Masukkan <b className="font-semibold text-txt">admin code</b> milik whale.
                 </p>
                 <Field label="Admin code" host>
                   <input
@@ -62,25 +79,25 @@ export default function AuthGate({ role = 'trader' }) {
                     onChange={(e) => setCode(e.target.value)}
                     autoFocus
                     autoComplete="off"
-                    className="w-full bg-transparent px-3 py-2 text-sm text-txt outline-none"
+                    className="w-full min-w-0 bg-transparent px-4 py-3 text-sm text-txt outline-none placeholder:text-sub/50"
                     placeholder="whale admin code"
                   />
                 </Field>
               </>
             ) : (
               <>
-                <div className="flex gap-4 text-sm">
+                <div className="seg">
                   <button
                     type="button"
+                    data-active={mode === 'login'}
                     onClick={() => { setMode('login'); setError('') }}
-                    className={`font-semibold ${mode === 'login' ? 'text-txt' : 'text-sub'}`}
                   >
                     Login
                   </button>
                   <button
                     type="button"
+                    data-active={mode === 'register'}
                     onClick={() => { setMode('register'); setError('') }}
-                    className={`font-semibold ${mode === 'register' ? 'text-txt' : 'text-sub'}`}
                   >
                     Daftar
                   </button>
@@ -90,7 +107,7 @@ export default function AuthGate({ role = 'trader' }) {
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     autoFocus
-                    className="w-full bg-transparent px-3 py-2 text-sm text-txt outline-none"
+                    className="w-full min-w-0 bg-transparent px-4 py-3 text-sm text-txt outline-none placeholder:text-sub/50"
                     placeholder="nama kamu"
                   />
                 </Field>
@@ -99,34 +116,27 @@ export default function AuthGate({ role = 'trader' }) {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-transparent px-3 py-2 text-sm text-txt outline-none"
+                    className="w-full min-w-0 bg-transparent px-4 py-3 text-sm text-txt outline-none placeholder:text-sub/50"
                     placeholder="••••••"
                   />
                 </Field>
               </>
             )}
 
-            {error && <div className="rounded bg-down/10 px-3 py-2 text-xs text-down">{error}</div>}
+            {error && (
+              <div className="rounded-lg bg-down/10 px-3 py-2.5 text-xs text-down">{error}</div>
+            )}
 
             <button
               type="submit"
               disabled={busy}
-              className={`w-full rounded-lg py-2.5 text-sm font-bold transition-colors ${
-                isHost ? 'bg-gold text-black hover:brightness-110' : 'bg-accent text-white hover:brightness-110'
+              className={`btn w-full py-3 text-base ${
+                isHost ? 'bg-gold text-black hover:brightness-110' : 'btn-primary'
               } ${busy ? 'opacity-60' : ''}`}
             >
               {busy ? '…' : isHost ? 'Masuk God Mode' : mode === 'register' ? 'Buat akun & main' : 'Masuk'}
             </button>
           </form>
-        </div>
-
-        <div className="mt-4 text-center">
-          <button
-            onClick={() => navigate(ROUTES.landing)}
-            className="text-[11px] text-sub/70 hover:text-txt"
-          >
-            ← Kembali ke beranda
-          </button>
         </div>
       </div>
     </div>
@@ -136,10 +146,10 @@ export default function AuthGate({ role = 'trader' }) {
 function Field({ label, children, host }) {
   return (
     <div>
-      <div className="mb-1 text-xs text-sub">{label}</div>
+      <div className="mb-1.5 text-xs text-sub">{label}</div>
       <div
-        className={`rounded-lg border border-border bg-panel2 ${
-          host ? 'focus-within:border-gold' : 'focus-within:border-accent'
+        className={`rounded-lg border border-transparent bg-panel2 transition-colors hover:border-panel3 ${
+          host ? 'focus-within:border-gold' : 'focus-within:border-sub'
         }`}
       >
         {children}

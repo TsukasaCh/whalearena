@@ -3,6 +3,34 @@ import { useSim } from '../store/useSimStore'
 import { signedUsd, fmtPrice, fmtQty, usd } from '../lib/format'
 import { playLiquidation, playProfit, playClose } from '../lib/sound'
 
+const DOT = {
+  up: 'bg-up',
+  down: 'bg-down',
+  accent: 'bg-accent',
+  neutral: 'bg-sub',
+}
+
+// Floating toast shell: soft dark pill-card with a small status dot.
+function Shell({ tone = 'neutral', children }) {
+  return (
+    <div className="animate-rise fixed bottom-5 left-1/2 z-50 -translate-x-1/2">
+      <div className="flex max-w-[92vw] items-center gap-3 rounded-2xl border border-white/5 bg-panel2 px-4 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.6)]">
+        <span className={`h-2 w-2 shrink-0 rounded-full ${DOT[tone]}`} aria-hidden="true" />
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function Body({ title, sub }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[13px] font-semibold text-txt">{title}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-sub">{sub}</div>}
+    </div>
+  )
+}
+
 export default function Toast() {
   const toast = useSim((s) => s.toast)
   const symbols = useSim((s) => s.symbols)
@@ -25,40 +53,34 @@ export default function Toast() {
 
   if (toast.type === 'error') {
     return (
-      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-        <div className="flex items-center gap-2 rounded-lg border border-down/40 bg-panel px-4 py-2.5 shadow-lg">
-          <span className="text-lg">⚠️</span>
-          <span className="text-xs font-semibold text-down">{toast.msg}</span>
-        </div>
-      </div>
+      <Shell tone="down">
+        <span className="text-[13px] font-medium text-down">{toast.msg}</span>
+      </Shell>
     )
   }
 
   if (toast.type === 'notice') {
     return (
-      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-        <div className="flex items-center gap-2 rounded-lg border border-up/40 bg-panel px-4 py-2.5 shadow-lg">
-          <span className="text-lg">✅</span>
-          <span className="text-xs font-semibold text-up">{toast.msg}</span>
-        </div>
-      </div>
+      <Shell tone="up">
+        <span className="text-[13px] font-medium text-txt">{toast.msg}</span>
+      </Shell>
     )
   }
 
   if (toast.type === 'liq') {
     return (
-      <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center">
+      <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="absolute inset-0 animate-flash bg-down/10" />
-        <div className="animate-pop pointer-events-auto rounded-2xl border-2 border-down bg-panel/95 px-10 py-6 text-center shadow-[0_0_60px_rgba(255,82,82,0.5)]">
-          <div className="text-5xl">☠️</div>
-          <div className="mt-1 text-3xl font-extrabold tracking-tight text-down">LIQUIDATED!</div>
-          <div className="mt-1 text-sm text-sub">
+        <div className="animate-pop pointer-events-auto w-full max-w-xs rounded-2xl border border-white/5 bg-panel2 px-8 py-7 text-center shadow-[0_0_0_1px_rgba(202,63,100,0.6),0_0_60px_rgba(202,63,100,0.45)]">
+          <div className="text-4xl">☠️</div>
+          <div className="mt-2 text-2xl font-bold tracking-tight text-down">LIQUIDATED!</div>
+          <div className="mt-1.5 text-[13px] text-sub">
             {toast.side?.toUpperCase()} position wiped at {fmtPrice(toast.price, dp)}
           </div>
-          <div className="mt-2 font-mono text-lg font-bold text-down">{signedUsd(toast.pnl)}</div>
+          <div className="mt-3 font-mono text-2xl font-semibold text-down">{signedUsd(toast.pnl)}</div>
           <button
             onClick={dismiss}
-            className="mt-3 rounded-md bg-down px-4 py-1.5 text-xs font-bold text-black hover:brightness-110"
+            className="mt-5 w-full rounded-full bg-down py-2.5 text-sm font-semibold text-white transition hover:brightness-110"
           >
             Dismiss
           </button>
@@ -70,79 +92,57 @@ export default function Toast() {
   if (toast.type === 'funding') {
     const got = toast.amount >= 0
     return (
-      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-panel px-4 py-2.5 shadow-lg">
-          <span className="text-lg">⏱️</span>
-          <div>
-            <div className="text-xs font-semibold text-txt">Funding {got ? 'Received' : 'Paid'}</div>
-            <div className="text-[10px] text-sub">
-              {sym}{toast.side?.toUpperCase()} · rate {(toast.rate * 100).toFixed(4)}%
-            </div>
-          </div>
-          <div className={`font-mono text-sm font-bold ${got ? 'text-up' : 'text-down'}`}>{signedUsd(toast.amount)}</div>
-        </div>
-      </div>
+      <Shell tone={got ? 'up' : 'down'}>
+        <Body
+          title={<>Funding {got ? 'Received' : 'Paid'}</>}
+          sub={<>{sym}{toast.side?.toUpperCase()} · rate {(toast.rate * 100).toFixed(4)}%</>}
+        />
+        <div className={`ml-2 font-mono text-sm font-semibold ${got ? 'text-up' : 'text-down'}`}>{signedUsd(toast.amount)}</div>
+      </Shell>
     )
   }
 
   if (toast.type === 'limitFill') {
     return (
-      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-        <div className="flex items-center gap-3 rounded-lg border border-accent/40 bg-panel px-4 py-2.5 shadow-lg">
-          <span className="text-lg">🎯</span>
-          <div>
-            <div className="text-xs font-semibold text-txt">Limit Order Filled</div>
-            <div className="text-[10px] text-sub">
-              {sym}{toast.side?.toUpperCase()} @ {fmtPrice(toast.price, dp)}
-            </div>
-          </div>
-        </div>
-      </div>
+      <Shell tone="accent">
+        <Body
+          title="Limit Order Filled"
+          sub={<>{sym}{toast.side?.toUpperCase()} @ {fmtPrice(toast.price, dp)}</>}
+        />
+      </Shell>
     )
   }
 
   if (toast.type === 'spotLimitFill') {
     const buy = toast.side === 'long' // spot long = buy, short = sell
     return (
-      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-        <div className={`flex items-center gap-3 rounded-lg border px-4 py-2.5 shadow-lg ${buy ? 'border-up/40' : 'border-down/40'} bg-panel`}>
-          <span className="text-lg">🎯</span>
-          <div>
-            <div className="text-xs font-semibold text-txt">Spot Limit {buy ? 'Buy' : 'Sell'} Filled{toast.partial ? ' (partial)' : ''}</div>
-            <div className="text-[10px] text-sub">{sym}@ {fmtPrice(toast.price, dp)}</div>
-          </div>
-        </div>
-      </div>
+      <Shell tone={buy ? 'up' : 'down'}>
+        <Body
+          title={<>Spot Limit {buy ? 'Buy' : 'Sell'} Filled{toast.partial ? ' (partial)' : ''}</>}
+          sub={<>{sym}@ {fmtPrice(toast.price, dp)}</>}
+        />
+      </Shell>
     )
   }
 
   if (toast.type === 'stakeReward') {
     return (
-      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-        <div className="flex items-center gap-3 rounded-lg border border-up/40 bg-panel px-4 py-2.5 shadow-lg">
-          <span className="text-lg">🌾</span>
-          <div>
-            <div className="text-xs font-semibold text-txt">Staking Reward</div>
-            <div className="text-[10px] text-sub">Hourly payout · 7% APY</div>
-          </div>
-          <div className="font-mono text-sm font-bold text-up">+{usd(toast.amount)}</div>
-        </div>
-      </div>
+      <Shell tone="up">
+        <Body title="Staking Reward" sub="Hourly payout · 7% APY" />
+        <div className="ml-2 font-mono text-sm font-semibold text-up">+{usd(toast.amount)}</div>
+      </Shell>
     )
   }
 
   if (toast.type === 'staked') {
     const staking = toast.action === 'stake'
     return (
-      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-panel px-4 py-2.5 shadow-lg">
-          <span className="text-lg">🔒</span>
-          <div>
-            <div className="text-xs font-semibold text-txt">{staking ? 'Staked' : 'Unstaked'}</div>
-            <div className="text-[10px] text-sub">{sym}{fmtQty(toast.qty)} · {staking ? 'earning 7% APY' : 'back in spot'}</div>
-          </div>
-        </div>
-      </div>
+      <Shell tone="neutral">
+        <Body
+          title={staking ? 'Staked' : 'Unstaked'}
+          sub={<>{sym}{fmtQty(toast.qty)} · {staking ? 'earning 7% APY' : 'back in spot'}</>}
+        />
+      </Shell>
     )
   }
 
@@ -150,22 +150,17 @@ export default function Toast() {
     const buy = toast.type === 'spotBuy'
     const win = (toast.pnl ?? 0) >= 0
     return (
-      <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-        <div className={`flex items-center gap-3 rounded-lg border px-4 py-2.5 shadow-lg ${buy ? 'border-up/40 bg-panel' : win ? 'border-up/40 bg-panel' : 'border-down/40 bg-panel'}`}>
-          <span className="text-lg">{buy ? '🛒' : '💵'}</span>
-          <div>
-            <div className="text-xs font-semibold text-txt">{buy ? 'Spot Buy Filled' : 'Spot Sell Filled'}</div>
-            <div className="text-[10px] text-sub">
-              {sym}{fmtQty(toast.qty)} @ {fmtPrice(toast.price, dp)}
-            </div>
-          </div>
-          {buy ? (
-            <div className="font-mono text-sm font-bold text-txt">{usd(toast.cost)}</div>
-          ) : (
-            <div className={`font-mono text-sm font-bold ${win ? 'text-up' : 'text-down'}`}>{signedUsd(toast.pnl)}</div>
-          )}
-        </div>
-      </div>
+      <Shell tone={buy ? 'up' : win ? 'up' : 'down'}>
+        <Body
+          title={buy ? 'Spot Buy Filled' : 'Spot Sell Filled'}
+          sub={<>{sym}{fmtQty(toast.qty)} @ {fmtPrice(toast.price, dp)}</>}
+        />
+        {buy ? (
+          <div className="ml-2 font-mono text-sm font-semibold text-txt">{usd(toast.cost)}</div>
+        ) : (
+          <div className={`ml-2 font-mono text-sm font-semibold ${win ? 'text-up' : 'text-down'}`}>{signedUsd(toast.pnl)}</div>
+        )}
+      </Shell>
     )
   }
 
@@ -179,21 +174,11 @@ export default function Toast() {
           ? 'Trailing Stop Hit'
           : 'Position Closed'
   return (
-    <div className="animate-rise fixed bottom-4 left-1/2 z-50 -translate-x-1/2">
-      <div
-        className={`flex items-center gap-3 rounded-lg border px-4 py-2.5 shadow-lg ${
-          win ? 'border-up/40 bg-panel' : 'border-down/40 bg-panel'
-        }`}
-      >
-        <span className="text-lg">{win ? '✅' : '🔻'}</span>
-        <div>
-          <div className="text-xs font-semibold text-txt">{label}</div>
-          <div className="text-[10px] text-sub">{sym}@ {fmtPrice(toast.price, dp)}</div>
-        </div>
-        <div className={`font-mono text-sm font-bold ${win ? 'text-up' : 'text-down'}`}>
-          {signedUsd(toast.pnl)}
-        </div>
+    <Shell tone={win ? 'up' : 'down'}>
+      <Body title={label} sub={<>{sym}@ {fmtPrice(toast.price, dp)}</>} />
+      <div className={`ml-2 font-mono text-sm font-semibold ${win ? 'text-up' : 'text-down'}`}>
+        {signedUsd(toast.pnl)}
       </div>
-    </div>
+    </Shell>
   )
 }

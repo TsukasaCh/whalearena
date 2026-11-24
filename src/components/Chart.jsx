@@ -4,10 +4,10 @@ import { useSim, TF, VIEW, BASE_PERIOD } from '../store/useSimStore'
 import { buildSeries } from '../lib/candles'
 import { fmt, fmtPrice } from '../lib/format'
 
-const UP = '#00E676'
-const DOWN = '#FF5252'
-const UPV = 'rgba(0,230,118,0.45)'
-const DOWNV = 'rgba(255,82,82,0.45)'
+const UP = '#25a750'
+const DOWN = '#ca3f64'
+const UPV = 'rgba(37,167,80,0.4)'
+const DOWNV = 'rgba(202,63,100,0.4)'
 const round2 = (n) => Math.round(n * 100) / 100
 // simple moving averages over candle closes (Binance's default trio + colors)
 const MAS = [
@@ -26,41 +26,6 @@ const smaSeries = (candles, n) => {
   return out
 }
 
-// next hourly funding: predicted rate (longs pay when positive) + countdown
-function FundingBadge() {
-  const funding = useSim((s) => s.crowd.funding)
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  if (!funding) return null
-  const left = Math.max(0, funding.next - Math.floor(now / 1000))
-  const mm = String(Math.floor(left / 60)).padStart(2, '0')
-  const ss = String(left % 60).padStart(2, '0')
-  const pos = funding.rate >= 0
-  return (
-    <span className="rounded bg-panel2/90 px-2 py-1 font-mono text-sub" title={pos ? 'Positif: long bayar ke short' : 'Negatif: short bayar ke long'}>
-      Funding <span className={pos ? 'text-up' : 'text-down'}>{pos ? '+' : ''}{(funding.rate * 100).toFixed(4)}%</span> · {mm}:{ss}
-    </span>
-  )
-}
-
-// Futures premium vs spot (basis). Both prices arrive on the ticker stream, so
-// this shows the gap live in either venue — it blows out during a squeeze.
-function BasisBadge() {
-  const meta = useSim((s) => s.symbols.find((x) => x.symbol === s.symbol))
-  if (!meta || !meta.spot || !meta.price) return null
-  const prem = ((meta.price - meta.spot) / meta.spot) * 100
-  const flat = Math.abs(prem) < 0.05
-  const pos = prem >= 0
-  return (
-    <span className="rounded bg-panel2/90 px-2 py-1 font-mono text-sub" title="Futures premium vs spot (basis)">
-      Basis <span className={flat ? 'text-sub' : pos ? 'text-up' : 'text-down'}>{pos ? '+' : ''}{prem.toFixed(2)}%</span>
-    </span>
-  )
-}
-
 export default function Chart() {
   const wrapRef = useRef(null)
   const legendRef = useRef(null)
@@ -73,9 +38,7 @@ export default function Chart() {
   const [quote, setQuote] = useState(null) // { y, price, side } | null
   const chipOverRef = useRef(false) // cursor is over the quick-trade chip (anti-flicker)
 
-  const symbol = useSim((s) => s.symbol)
   const dp = useSim((s) => s.dp)
-  const mode = useSim((s) => s.mode)
   const roundDp = (n) => { const d = useSim.getState().dp || 2; const f = Math.pow(10, d); return Math.round(n * f) / f }
 
   // act on the hovered price: set SL/TP on a live position, or place a limit entry
@@ -112,20 +75,21 @@ export default function Chart() {
     const el = wrapRef.current
     const chart = createChart(el, {
       layout: {
-        background: { type: ColorType.Solid, color: '#0b0e11' },
-        textColor: '#848e9c',
+        background: { type: ColorType.Solid, color: '#121212' },
+        textColor: '#8f8f8f',
+        fontSize: 11,
         fontFamily: 'Inter, system-ui, sans-serif',
       },
       grid: {
-        vertLines: { color: 'rgba(43,49,57,0.35)' },
-        horzLines: { color: 'rgba(43,49,57,0.35)' },
+        vertLines: { color: 'rgba(255,255,255,0.04)' },
+        horzLines: { color: 'rgba(255,255,255,0.04)' },
       },
-      rightPriceScale: { borderColor: '#2b3139', scaleMargins: { top: 0.06, bottom: 0.24 } },
-      timeScale: { borderColor: '#2b3139', timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: '#262626', scaleMargins: { top: 0.06, bottom: 0.24 } },
+      timeScale: { borderColor: '#262626', timeVisible: true, secondsVisible: false },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: { color: '#848e9c', style: LineStyle.Dashed, labelBackgroundColor: '#2b3139' },
-        horzLine: { color: '#848e9c', style: LineStyle.Dashed, labelBackgroundColor: '#2b3139' },
+        vertLine: { color: '#5c5c5c', style: LineStyle.Dashed, labelBackgroundColor: '#2b2b2b' },
+        horzLine: { color: '#5c5c5c', style: LineStyle.Dashed, labelBackgroundColor: '#2b2b2b' },
       },
       width: el.clientWidth,
       height: el.clientHeight,
@@ -198,8 +162,8 @@ export default function Chart() {
       const dp = s.dp || 2
       const chg = o ? ((c - o) / o) * 100 : 0
       const col = c >= o ? UP : DOWN
-      const k = (t) => `<span style="color:#5b6673">${t}</span>`
-      const val = (t) => `<span style="color:#eaecef">${t}</span>`
+      const k = (t) => `<span style="color:#8f8f8f">${t}</span>`
+      const val = (t) => `<span style="color:#f7f7f7">${t}</span>`
       node.innerHTML =
         `${k('O')} ${val(fmtPrice(o, dp))}&nbsp;&nbsp;${k('H')} ${val(fmtPrice(h, dp))}&nbsp;&nbsp;` +
         `${k('L')} ${val(fmtPrice(l, dp))}&nbsp;&nbsp;${k('C')} ${val(fmtPrice(c, dp))}&nbsp;&nbsp;` +
@@ -286,9 +250,9 @@ export default function Chart() {
       if (!position || useSim.getState().mode !== 'perp') return // position lines are futures-only
       const addStatic = (price, color, title, style = LineStyle.Solid, width = 1) =>
         linesRef.current.push(series.createPriceLine({ price, color, lineWidth: width, lineStyle: style, axisLabelVisible: true, title }))
-      addStatic(position.entry, '#3b82f6', 'ENTRY', LineStyle.Solid, 2)
+      addStatic(position.entry, '#5b8cff', 'ENTRY', LineStyle.Solid, 2)
       if (position.trailLevel) addStatic(position.trailLevel, '#f0b90b', 'TRAIL', LineStyle.Dashed, 1)
-      addStatic(position.liq, '#ff1744', 'LIQ', LineStyle.Solid, 2)
+      addStatic(position.liq, '#ff4d6d', 'LIQ', LineStyle.Solid, 2)
       // draggable SL / TP lines — shown once set (create via the hover chip),
       // then drag to fine-tune. Drag onto the wrong side of price clears them.
       if (position.sl && !(drag && drag.key === '__sl'))
@@ -345,7 +309,7 @@ export default function Chart() {
       }
       for (const o of list) {
         if (drag && drag.key === o.id) continue // don't fight the user's drag
-        const color = o.spot ? (o.side === 'long' ? '#00E676' : '#FF5252') : '#3b82f6'
+        const color = o.spot ? (o.side === 'long' ? UP : DOWN) : '#5b8cff'
         const ex = draggable.get(o.id)
         if (ex) { ex.price = o.price; ex.side = o.side; ex.spot = !!o.spot; ex.line.applyOptions({ price: o.price, title: lineTitle(o) }) }
         else draggable.set(o.id, { kind: 'limit', spot: !!o.spot, side: o.side, price: o.price, line: series.createPriceLine({ price: o.price, color, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: true, title: lineTitle(o) }) })
@@ -435,7 +399,7 @@ export default function Chart() {
             _c: ev.count,
             text: '☠' + ev.count,
             position: ev.side === 'long' ? 'belowBar' : 'aboveBar',
-            color: '#ff1744',
+            color: '#ff4d6d',
             shape: ev.side === 'long' ? 'arrowDown' : 'arrowUp',
           })
           if (arr.length > 40) arr.shift()
@@ -481,19 +445,13 @@ export default function Chart() {
   return (
     <div className="relative h-full w-full overflow-hidden">
       <div ref={wrapRef} className="h-full w-full" />
-      <div className="pointer-events-none absolute left-3 top-3 z-10 flex items-center gap-2 text-xs">
-        <span className="rounded bg-panel2/90 px-2 py-1 font-semibold text-txt">{symbol}/USDT</span>
-        <span className="rounded bg-panel2/90 px-2 py-1 text-sub">{mode === 'spot' ? 'Spot' : 'Perp'} · Simulated</span>
-        <BasisBadge />
-        {mode !== 'spot' && <FundingBadge />}
-      </div>
       <div
         ref={legendRef}
-        className="pointer-events-none absolute left-3 top-11 z-10 rounded bg-bg/70 px-2 py-1 font-mono text-[11px] leading-none backdrop-blur-sm"
+        className="pointer-events-none absolute left-2 top-2 z-10 rounded bg-panel/70 px-1.5 py-1 font-mono text-[11px] leading-none backdrop-blur-sm"
       />
       <div
         ref={maLegendRef}
-        className="pointer-events-none absolute left-3 top-[4.1rem] z-10 rounded bg-bg/70 px-2 py-1 font-mono text-[11px] leading-none backdrop-blur-sm"
+        className="pointer-events-none absolute left-2 top-8 z-10 rounded bg-panel/70 px-1.5 py-1 font-mono text-[11px] leading-none backdrop-blur-sm"
       />
 
       {/* quick action at the hovered price (OKX-style): set SL/TP or place a limit */}
@@ -502,14 +460,14 @@ export default function Chart() {
           onClick={placeFromChart}
           onMouseEnter={() => { chipOverRef.current = true }}
           onMouseLeave={() => { chipOverRef.current = false }}
-          className={`absolute z-20 flex -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded px-2 py-1 font-mono text-[10px] font-bold shadow-lg ring-1 ring-black/20 transition-none hover:brightness-110 ${
+          className={`absolute z-20 flex -translate-y-1/2 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 font-mono text-[11px] font-semibold shadow-lg shadow-black/40 transition-none hover:brightness-110 ${
             quote.kind === 'tp'
-              ? 'bg-up text-black'
+              ? 'bg-up text-white'
               : quote.kind === 'sl'
-                ? 'bg-down text-black'
+                ? 'bg-down text-white'
                 : quote.side === 'long' || quote.side === 'buy'
-                  ? 'bg-up text-black'
-                  : 'bg-down text-black'
+                  ? 'bg-up text-white'
+                  : 'bg-down text-white'
           }`}
           style={{ top: `${quote.y}px`, right: '68px' }}
           title="Klik untuk pasang di harga ini"

@@ -78,24 +78,23 @@ export default function OrderBook() {
 
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-sub">Order Book</span>
-        <div className="flex items-center gap-1">
-          <span className="text-[10px] text-sub">group</span>
-          <select
-            value={group}
-            onChange={(e) => chooseGroup(Number(e.target.value))}
-            className="rounded border border-border bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-txt outline-none"
-          >
-            {groupings.map((gr) => (
-              <option key={gr} value={gr}>{fmtPrice(gr, dpOfTick(gr))}</option>
-            ))}
-          </select>
-        </div>
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[13px] font-semibold text-txt">Order book</span>
+        <select
+          value={group}
+          onChange={(e) => chooseGroup(Number(e.target.value))}
+          title="Price grouping"
+          className="cursor-pointer rounded-md bg-panel2 px-2 py-1 font-mono text-[11px] text-txt outline-none hover:bg-panel3"
+        >
+          {groupings.map((gr) => (
+            <option key={gr} value={gr}>{fmtPrice(gr, dpOfTick(gr))}</option>
+          ))}
+        </select>
       </div>
-      <div className="mb-1 flex items-center justify-between px-1 text-[10px] text-sub">
+      <div className="mb-1 grid grid-cols-3 px-1 text-[11px] text-sub">
         <span>Price (USDT)</span>
-        <span>Size ({baseAsset})</span>
+        <span className="text-right">Size ({baseAsset})</span>
+        <span className="text-right">Total ({baseAsset})</span>
       </div>
 
       <div>
@@ -104,11 +103,14 @@ export default function OrderBook() {
         ))}
       </div>
 
-      <div className="my-0.5 flex items-center justify-between rounded bg-panel2/60 px-2 py-1">
-        <span className={`font-mono text-sm font-bold ${dir > 0 ? 'text-up' : dir < 0 ? 'text-down' : 'text-txt'}`}>
-          {dir > 0 ? '▲' : dir < 0 ? '▼' : '•'} {fmtPrice(price, dp)}
+      <div className="flex items-baseline gap-1.5 px-1 py-2">
+        <span className={`font-mono text-lg font-semibold leading-none ${dir > 0 ? 'text-up' : dir < 0 ? 'text-down' : 'text-txt'}`}>
+          {fmtPrice(price, dp)}
         </span>
-        <span className="text-[10px] text-sub">mark</span>
+        <span className={`text-xs leading-none ${dir > 0 ? 'text-up' : dir < 0 ? 'text-down' : 'text-sub'}`}>
+          {dir > 0 ? '↑' : dir < 0 ? '↓' : ''}
+        </span>
+        <span className="ml-auto text-[11px] text-sub">Mark</span>
       </div>
 
       <div>
@@ -117,14 +119,19 @@ export default function OrderBook() {
         ))}
       </div>
 
-      <div className="mt-2">
-        <div className="mb-0.5 flex justify-between font-mono text-[10px]">
-          <span className="text-up">{Math.round(buyPct)}% · {compact(built.totB)}</span>
-          <span className="text-down">{compact(built.totA)} · {Math.round(100 - buyPct)}%</span>
+      <div className="mt-3 flex items-center gap-2 font-mono text-[11px]">
+        <span className="shrink-0 text-up" title={`Bids ${compact(built.totB)}`}>
+          <span className="mr-1 rounded-sm bg-up/15 px-1 font-semibold">B</span>
+          {Math.round(buyPct)}%
+        </span>
+        <div className="flex h-1 flex-1 gap-0.5 overflow-hidden rounded-full">
+          <div className="h-full rounded-full bg-up" style={{ width: `${buyPct}%` }} />
+          <div className="h-full flex-1 rounded-full bg-down" />
         </div>
-        <div className="flex h-1.5 overflow-hidden rounded-full bg-down/50">
-          <div className="h-full bg-up/70" style={{ width: `${buyPct}%` }} />
-        </div>
+        <span className="shrink-0 text-down" title={`Asks ${compact(built.totA)}`}>
+          {Math.round(100 - buyPct)}%
+          <span className="ml-1 rounded-sm bg-down/15 px-1 font-semibold">S</span>
+        </span>
       </div>
     </div>
   )
@@ -137,26 +144,27 @@ function Row({ row, maxSize, tone, pdp }) {
   const priceColor = isUp ? 'text-up' : 'text-down'
   const real = row.real > 0 // a genuine resting user limit order sits here
   return (
-    <div className="relative flex items-center justify-between px-1 py-[1.5px] font-mono text-[10px]">
+    <div className="relative grid h-5 grid-cols-3 items-center px-1 font-mono text-xs hover:bg-white/5">
       <div
-        className={`absolute inset-y-0 right-0 ${barBg} transition-[width] duration-300 ease-out`}
-        style={{ width: `${w}%`, opacity: real ? 0.5 : row.wall ? 0.32 : 0.12 }}
+        className={`absolute inset-y-px right-0 ${barBg} transition-[width] duration-300 ease-out`}
+        style={{ width: `${w}%`, opacity: real ? 0.45 : row.wall ? 0.28 : 0.13 }}
       />
       {row.wall && (
         <div
-          className={`absolute inset-y-0 w-[2px] ${row.mine ? 'bg-gold' : barBg} ${row.mine ? '' : 'opacity-90'}`}
+          className={`absolute inset-y-px w-[2px] ${row.mine ? 'bg-gold' : barBg} ${row.mine ? '' : 'opacity-90'}`}
           style={{ right: `${w}%` }}
         />
       )}
       <span className="relative z-10 flex items-center gap-1">
+        <span className={priceColor}>{fmtPrice(row.price, pdp)}</span>
         {real && (
-          <span className={row.mine ? 'text-gold' : priceColor} title={row.mine ? 'Order limit kamu' : 'Order limit trader lain'}>
-            {row.mine ? '◆' : '•'}
+          <span className={`text-[9px] ${row.mine ? 'text-gold' : priceColor}`} title={row.mine ? 'Order limit kamu' : 'Order limit trader lain'}>
+            {row.mine ? '◆' : '●'}
           </span>
         )}
-        <span className={priceColor}>{fmtPrice(row.price, pdp)}</span>
       </span>
-      <span className={`relative z-10 ${row.wall ? 'font-bold text-txt' : 'text-txt/75'}`}>{fmtQty(row.size)}</span>
+      <span className={`relative z-10 text-right ${row.wall ? 'font-semibold text-txt' : 'text-txt/80'}`}>{fmtQty(row.size)}</span>
+      <span className="relative z-10 text-right text-txt/55">{fmtQty(row.cum)}</span>
     </div>
   )
 }

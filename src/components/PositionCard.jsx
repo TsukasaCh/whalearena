@@ -10,40 +10,42 @@ function PendingList() {
   const cancelLimit = useSim((s) => s.cancelLimit)
   if (!pendingOrders.length) return null
   return (
-    <div className="rounded-lg border border-accent/40 bg-accent/5 p-3">
+    <div className="rounded-xl bg-panel2/50 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-accent">
-          ⏳ Pending Limit{pendingOrders.length > 1 ? `s · ${pendingOrders.length}` : ''}
+        <span className="text-[13px] font-semibold text-txt">
+          Pending Limit{pendingOrders.length > 1 ? `s · ${pendingOrders.length}` : ''}
         </span>
         {pendingOrders.length > 1 && (
           <button
             onClick={() => cancelLimit()}
-            className="rounded bg-panel2 px-2 py-0.5 text-[10px] font-semibold text-sub hover:text-down"
+            className="rounded-full bg-panel2 px-2.5 py-1 text-[11px] font-medium text-sub transition-colors hover:bg-panel3 hover:text-down"
           >
             Cancel all
           </button>
         )}
       </div>
-      <div className="space-y-1.5">
+      <div className="divide-y divide-border">
         {pendingOrders.map((o) => {
           const part = o.filled > 0.000001
           return (
-            <div key={o.id} className="flex items-center justify-between gap-2 font-mono text-xs">
+            <div key={o.id} className="flex items-center gap-2 py-2 text-xs first:pt-0 last:pb-0">
               <span
-                className={`rounded px-2 py-0.5 text-[11px] font-bold ${
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold ${
                   o.side === 'long' ? 'bg-up/15 text-up' : 'bg-down/15 text-down'
                 }`}
               >
                 {o.side === 'long' ? 'BUY' : 'SELL'} {o.leverage}x
               </span>
-              <span className="text-accent">@ {fmtPrice(o.price, dp)}</span>
-              <span className="text-[10px] text-sub">
-                {usd(o.margin)}
-                {part ? ` · ${Math.round((o.filled / o.qty) * 100)}% filled` : ''}
-              </span>
+              <div className="min-w-0 flex-1">
+                <div className="font-mono text-[13px] font-medium text-txt">@ {fmtPrice(o.price, dp)}</div>
+                <div className="truncate font-mono text-[11px] text-sub">
+                  {usd(o.margin)}
+                  {part ? ` · ${Math.round((o.filled / o.qty) * 100)}% filled` : ''}
+                </div>
+              </div>
               <button
                 onClick={() => cancelLimit(o.id)}
-                className="rounded bg-panel2 px-2 py-0.5 text-[10px] font-semibold text-txt hover:text-down"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-panel2 text-[11px] text-sub transition-colors hover:bg-panel3 hover:text-down"
               >
                 ✕
               </button>
@@ -67,10 +69,9 @@ export default function PositionCard() {
     return (
       <div className="space-y-3">
         <PendingList />
-        <div className="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border py-8 text-center">
-          <span className="text-2xl opacity-40">📈</span>
-          <span className="text-sm text-sub">No open position</span>
-          <span className="text-xs text-sub/60">
+        <div className="flex flex-col items-center justify-center gap-1 rounded-xl bg-panel2/40 px-4 py-10 text-center">
+          <span className="text-[13px] font-medium text-txt">No open position</span>
+          <span className="text-xs text-sub">
             {hasPending ? 'Limit order(s) resting on the book' : 'Open a Long or Short to start'}
           </span>
         </div>
@@ -95,45 +96,45 @@ export default function PositionCard() {
     <div className="space-y-3">
     <PendingList />
     <div
-      className={`rounded-lg border bg-panel p-3 ${
-        danger ? 'animate-shake border-down shadow-[0_0_20px_rgba(255,82,82,0.35)]' : 'border-border'
+      className={`rounded-xl bg-panel2/50 p-3 ${
+        danger ? 'animate-shake shadow-[0_0_0_1px_rgba(202,63,100,0.7),0_0_24px_rgba(202,63,100,0.35)]' : ''
       }`}
     >
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      {/* Header: side badge · leverage · margin mode · close */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
           <span
-            className={`rounded px-2 py-0.5 text-xs font-bold ${
+            className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${
               isLong ? 'bg-up/15 text-up' : 'bg-down/15 text-down'
             }`}
           >
             {isLong ? 'LONG' : 'SHORT'} · {position.leverage}x
           </span>
-          <span className="text-xs text-sub">Isolated</span>
+          <span className="rounded bg-panel2 px-1.5 py-0.5 text-[11px] font-medium text-sub">Isolated</span>
         </div>
-        <button
-          onClick={closePosition}
-          className="rounded bg-panel2 px-2.5 py-1 text-xs font-semibold text-txt hover:bg-border"
-        >
+        <button onClick={closePosition} className="btn btn-ghost btn-sm shrink-0">
           Close
         </button>
       </div>
 
       {/* PnL headline */}
-      <div className="mb-3 rounded-md bg-panel2/60 p-3 text-center">
-        <div className="text-[10px] uppercase tracking-wide text-sub">Unrealized PnL</div>
-        <div className={`font-mono text-2xl font-bold ${win ? 'text-up' : 'text-down'}`}>
-          {signedUsd(pnl)}
-        </div>
-        <div className={`font-mono text-sm font-semibold ${win ? 'text-up' : 'text-down'}`}>
-          {pct(pnlRoe)} ROE
+      <div className="mt-4">
+        <div className="text-xs text-sub">Unrealized PnL</div>
+        <div className="mt-0.5 flex flex-wrap items-baseline justify-between gap-x-2">
+          <span className={`font-mono text-2xl font-semibold leading-tight ${win ? 'text-up' : 'text-down'}`}>
+            {signedUsd(pnl)}
+          </span>
+          <span className={`font-mono text-[13px] font-medium ${win ? 'text-up' : 'text-down'}`}>
+            {pct(pnlRoe)} ROE
+          </span>
         </div>
       </div>
 
-      <div className="mb-3 grid grid-cols-2 gap-y-2">
-        <Stat label="Entry Price" value={fmtPrice(position.entry, dp)} valueClass="text-accent" />
-        <Stat label="Mark Price" value={fmtPrice(price, dp)} />
-        <Stat label="Margin" value={usd(position.margin)} />
-        <Stat label="Size" value={`${fmtQty(position.qty)} ${baseAsset}`} />
+      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-border pt-3">
+        <Stat label="Entry Price" value={fmtPrice(position.entry, dp)} valueClass="text-txt" />
+        <Stat label="Mark Price" value={fmtPrice(price, dp)} valueClass="text-txt" />
+        <Stat label="Margin" value={usd(position.margin)} valueClass="text-txt" />
+        <Stat label="Size" value={`${fmtQty(position.qty)} ${baseAsset}`} valueClass="text-txt" />
         <Stat label="Fees Paid" value={usd(-(position.fees || 0))} valueClass="text-sub" />
         <Stat
           label="Funding"
@@ -153,14 +154,14 @@ export default function PositionCard() {
       </div>
 
       {/* Liquidation meter */}
-      <div className={`rounded-md p-2 ${danger ? 'bg-down/15' : 'bg-panel2/60'}`}>
-        <div className="mb-1 flex items-center justify-between text-xs">
-          <span className={`font-semibold ${danger ? 'animate-flash text-down' : 'text-sub'}`}>
+      <div className={`mt-3 ${danger ? 'rounded-lg bg-down/10 p-3' : 'border-t border-border pt-3'}`}>
+        <div className="flex items-center justify-between text-xs">
+          <span className={danger ? 'animate-flash font-semibold text-down' : 'text-sub'}>
             {danger ? '☠ LIQUIDATION IMMINENT' : 'Liquidation Price'}
           </span>
-          <span className="font-mono font-bold text-down">{fmtPrice(position.liq, dp)}</span>
+          <span className="shrink-0 font-mono text-[13px] font-medium text-down">{fmtPrice(position.liq, dp)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-border">
+        <div className="mt-2 h-1 overflow-hidden rounded-full bg-panel3">
           <div
             className={`h-full rounded-full transition-all duration-200 ${
               danger ? 'bg-down' : warn ? 'bg-gold' : 'bg-up'
@@ -168,7 +169,7 @@ export default function PositionCard() {
             style={{ width: `${(towardLiq ? traveled : 0) * 100}%` }}
           />
         </div>
-        <div className="mt-1 text-right font-mono text-[10px] text-sub">
+        <div className="mt-1.5 text-right font-mono text-[11px] text-sub">
           {fmt(dist * 100)}% away
         </div>
       </div>

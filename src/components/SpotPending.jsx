@@ -12,39 +12,41 @@ export default function SpotPending() {
   if (!orders || orders.length === 0) return null
 
   return (
-    <div className="rounded-lg border border-accent/40 bg-accent/5 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-accent">
-          ⏳ Spot Limit{orders.length > 1 ? `s · ${orders.length}` : ''}
+    <div className="rounded-xl bg-panel2/50 p-3">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[13px] font-semibold text-txt">
+          Spot Limit{orders.length > 1 ? `s · ${orders.length}` : ''}
         </span>
         {orders.length > 1 && (
           <button
             onClick={() => cancel()}
-            className="rounded bg-panel2 px-2 py-0.5 text-[10px] font-semibold text-sub hover:text-down"
+            className="rounded-full bg-panel3/70 px-2.5 py-1 text-[11px] font-medium text-sub transition-colors hover:bg-panel3 hover:text-down"
           >
             Cancel all
           </button>
         )}
       </div>
-      <div className="space-y-1.5">
+      <div className="divide-y divide-border">
         {orders.map((o) => {
           const buy = o.side === 'long'
           const part = o.filled > 1e-6
           const rem = o.qty - (o.filled || 0)
           return (
-            <div key={o.id} className="flex items-center justify-between gap-2 font-mono text-xs">
-              <span className={`rounded px-2 py-0.5 text-[11px] font-bold ${buy ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
+            <div key={o.id} className="flex items-center gap-2 py-2 text-xs last:pb-0">
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold ${buy ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`}>
                 {buy ? 'BUY' : 'SELL'}
               </span>
-              <span className="text-accent">@ {fmtPrice(o.price, dp)}</span>
-              <span className="text-[10px] text-sub">
-                {fmtQty(rem)} {baseAsset}
-                {buy ? ` · ${usd((o.reservedUsd || 0) * (rem / (o.qty || 1)))}` : ''}
-                {part ? ` · ${Math.round((o.filled / o.qty) * 100)}%` : ''}
-              </span>
+              <div className="min-w-0 flex-1">
+                <div className="font-mono text-[13px] font-medium text-txt">@ {fmtPrice(o.price, dp)}</div>
+                <div className="truncate font-mono text-[11px] text-sub">
+                  {fmtQty(rem)} {baseAsset}
+                  {buy ? ` · ${usd((o.reservedUsd || 0) * (rem / (o.qty || 1)))}` : ''}
+                  {part ? ` · ${Math.round((o.filled / o.qty) * 100)}%` : ''}
+                </div>
+              </div>
               <button
                 onClick={() => cancel(o.id)}
-                className="rounded bg-panel2 px-2 py-0.5 text-[10px] font-semibold text-txt hover:text-down"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-panel3/70 text-[11px] text-sub transition-colors hover:bg-panel3 hover:text-down"
               >
                 ✕
               </button>

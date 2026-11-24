@@ -18,15 +18,15 @@ export default function ManagePosition({ position }) {
   }
 
   const inputCls =
-    'w-full rounded-md border border-border bg-panel2 px-2 py-1.5 font-mono text-xs outline-none placeholder:text-sub/40'
+    'w-full rounded-lg border border-transparent bg-panel2 px-3 py-2 font-mono text-sm outline-none placeholder:text-sub/50 hover:border-panel3 focus:border-sub'
 
   return (
-    <div className="mt-3 space-y-2 rounded-md border border-border bg-panel2/40 p-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-sub">Manage Position</div>
+    <div className="mt-3 space-y-3 border-t border-border pt-3">
+      <div className="text-[13px] font-semibold text-txt">Manage Position</div>
 
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <div className="mb-0.5 text-[10px] text-sub">Stop Loss</div>
+          <div className="mb-1 text-xs text-sub">Stop Loss</div>
           <input
             type="number"
             value={sl}
@@ -36,7 +36,7 @@ export default function ManagePosition({ position }) {
           />
         </div>
         <div>
-          <div className="mb-0.5 text-[10px] text-sub">Take Profit</div>
+          <div className="mb-1 text-xs text-sub">Take Profit</div>
           <input
             type="number"
             value={tp}
@@ -46,18 +46,15 @@ export default function ManagePosition({ position }) {
           />
         </div>
       </div>
-      <button
-        onClick={applyTpSl}
-        className="w-full rounded-md bg-panel2 py-1.5 text-xs font-bold text-txt hover:bg-border"
-      >
+      <button onClick={applyTpSl} className="btn btn-ghost w-full py-2 text-[13px]">
         Update TP / SL
       </button>
 
-      <div className="border-t border-border pt-2">
-        <div className="mb-0.5 flex items-center justify-between text-[10px] text-sub">
+      <div className="border-t border-border pt-3">
+        <div className="mb-1 flex items-center justify-between gap-2 text-xs text-sub">
           <span>Trailing Stop (callback %)</span>
           {position.trail && position.trailLevel && (
-            <span className="text-gold">
+            <span className="shrink-0 font-mono text-[11px] text-gold">
               @ {fmtPrice(position.trailLevel, dp)} · {fmt(position.trail.pct * 100, 2)}%
             </span>
           )}
@@ -69,24 +66,21 @@ export default function ManagePosition({ position }) {
             value={trail}
             placeholder="e.g. 1.0"
             onChange={(e) => setTrail(e.target.value)}
-            className={`${inputCls} flex-1 text-gold`}
+            className={`${inputCls} min-w-0 flex-1 text-gold`}
           />
-          <button
-            onClick={applyTrail}
-            className="rounded-md bg-gold/20 px-3 py-1.5 text-xs font-bold text-gold hover:bg-gold/30"
-          >
+          <button onClick={applyTrail} className="btn btn-ghost shrink-0 text-[13px]">
             Set
           </button>
           {position.trail && (
             <button
               onClick={stopTrail}
-              className="rounded-md bg-panel2 px-2 py-1.5 text-xs font-semibold text-sub hover:text-down"
+              className="btn btn-outline shrink-0 text-[13px] text-sub hover:text-down"
             >
               Off
             </button>
           )}
         </div>
-        <div className="mt-1 text-[10px] text-sub/60">
+        <div className="mt-1.5 text-[11px] leading-relaxed text-sub">
           Stop follows price and triggers on a {trail || '—'}% pullback from the peak.
         </div>
       </div>

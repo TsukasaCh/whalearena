@@ -3,21 +3,25 @@ export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
+      // OKX-style dark palette: pure-black canvas, near-black panels, hairline
+      // borders, muted green/red, and white as the primary action colour.
       colors: {
-        bg: '#0b0e11',
-        panel: '#161a1e',
-        panel2: '#1e2329',
-        border: '#2b3139',
-        txt: '#eaecef',
-        sub: '#848e9c',
-        up: '#00E676',
-        down: '#FF5252',
-        accent: '#3b82f6',
+        bg: '#000000',
+        panel: '#121212',
+        panel2: '#1f1f1f',
+        panel3: '#2b2b2b',
+        border: '#262626',
+        txt: '#f7f7f7',
+        sub: '#8f8f8f',
+        up: '#25a750',
+        down: '#ca3f64',
+        accent: '#5b8cff',
         gold: '#f0b90b',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
+        // numbers use the UI face with tabular figures (see index.css), like OKX
+        mono: ['Inter', 'system-ui', 'sans-serif'],
       },
       keyframes: {
         shake: {

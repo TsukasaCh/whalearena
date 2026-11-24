@@ -5,7 +5,7 @@ import { useSocket } from './net/useSocket'
 import { useRoute, navigate, ROUTES } from './router'
 import Landing from './components/Landing'
 import AuthGate from './components/AuthGate'
-import TopBar from './components/TopBar'
+import TopBar, { TickerBar, TimeframeTabs } from './components/TopBar'
 import Chart from './components/Chart'
 import RetailPanel from './components/RetailPanel'
 import MarketMakerPanel from './components/MarketMakerPanel'
@@ -60,21 +60,32 @@ function TradingApp({ isMM = false }) {
       {showHome ? (
         <HomeDashboard onEnter={(m = 'perp') => setView(m)} />
       ) : (
-        <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <section className="flex min-h-[46vh] flex-1 flex-col border-b border-border lg:min-h-0 lg:border-b-0 lg:border-r">
-            <div className="min-h-0 flex-1">
-              <Chart />
-            </div>
-            <ConceptStrip isMM={isMM} mode={mode} />
-          </section>
-          <aside
-            className={`flex min-h-0 w-full shrink-0 flex-col lg:w-[380px] ${
-              isMM ? 'lg:border-l-2 lg:border-gold/40' : ''
-            }`}
-          >
-            {isMM ? <MarketMakerPanel /> : <RetailPanel mode={mode} />}
-          </aside>
-        </main>
+        <>
+          <TickerBar isMM={isMM} mode={mode} />
+          <main className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-1 lg:flex-row lg:overflow-hidden">
+            <section className="flex min-h-[56vh] shrink-0 flex-col overflow-hidden rounded-lg bg-panel lg:min-h-0 lg:flex-1 lg:shrink">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-3 py-1.5">
+                <TimeframeTabs />
+                <span className="truncate text-[11px] text-sub">
+                  {mode === 'spot' ? 'Spot' : 'Perpetual'} · Simulated market
+                </span>
+              </div>
+              <div className="min-h-0 flex-1">
+                <Chart />
+              </div>
+              <ConceptStrip isMM={isMM} mode={mode} />
+            </section>
+            <aside
+              className={`flex w-full shrink-0 flex-col lg:min-h-0 ${
+                isMM
+                  ? 'overflow-hidden rounded-lg bg-panel lg:w-[380px] lg:ring-1 lg:ring-gold/25'
+                  : 'lg:w-[380px] xl:w-[640px]'
+              }`}
+            >
+              {isMM ? <MarketMakerPanel /> : <RetailPanel mode={mode} />}
+            </aside>
+          </main>
+        </>
       )}
 
       <Toast />
@@ -84,7 +95,7 @@ function TradingApp({ isMM = false }) {
 
 function ConceptStrip({ isMM, mode = 'perp' }) {
   return (
-    <div className="hidden items-center gap-3 border-t border-border bg-panel px-4 py-1.5 text-[11px] text-sub lg:flex">
+    <div className="hidden shrink-0 items-center gap-2 border-t border-border px-3 py-1.5 text-[11px] text-sub lg:flex">
       {isMM ? (
         <>
           <span className="font-semibold text-gold">God Mode:</span>
@@ -95,7 +106,7 @@ function ConceptStrip({ isMM, mode = 'perp' }) {
         </>
       ) : mode === 'spot' ? (
         <>
-          <span className="font-semibold text-accent">Spot:</span>
+          <span className="font-semibold text-txt">Spot:</span>
           <span>
             buy the coin outright and hold it — <span className="text-up">no leverage, no liquidation</span>.
             Your PnL is just price × the coins you own.
@@ -103,14 +114,14 @@ function ConceptStrip({ isMM, mode = 'perp' }) {
         </>
       ) : (
         <>
-          <span className="font-semibold text-accent">Perpetual:</span>
+          <span className="font-semibold text-txt">Perpetual:</span>
           <span>
             open a leveraged position — but the Whale is hunting your{' '}
             <span className="text-down">liquidation price</span>.
           </span>
         </>
       )}
-      <span className="ml-auto italic text-sub/60">Educational game — not financial advice.</span>
+      <span className="ml-auto shrink-0 text-sub/60">Educational game — not financial advice.</span>
     </div>
   )
 }

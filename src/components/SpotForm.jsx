@@ -77,59 +77,52 @@ export default function SpotForm() {
 
   return (
     <div className="space-y-3">
-      {/* Market / Limit */}
-      <div className="flex rounded-md bg-panel2 p-0.5 text-xs">
-        {[
-          { id: 'market', label: 'Market' },
-          { id: 'limit', label: 'Limit' },
-        ].map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setOrderType(t.id)}
-            className={`flex-1 rounded py-1 font-semibold transition-colors ${
-              orderType === t.id ? 'bg-panel text-txt shadow' : 'text-sub hover:text-txt'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
       {/* Buy / Sell */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-0.5">
         <button
           onClick={() => setTab('buy')}
-          className={`rounded-md py-2 text-sm font-bold transition-colors ${
-            isBuy ? 'bg-up text-black' : 'bg-panel2 text-sub hover:text-txt'
+          className={`rounded-md py-2 text-[13px] font-semibold transition-colors ${
+            isBuy ? 'bg-up text-white' : 'text-sub hover:text-txt'
           }`}
         >
           BUY {baseAsset}
         </button>
         <button
           onClick={() => setTab('sell')}
-          className={`rounded-md py-2 text-sm font-bold transition-colors ${
-            !isBuy ? 'bg-down text-black' : 'bg-panel2 text-sub hover:text-txt'
+          className={`rounded-md py-2 text-[13px] font-semibold transition-colors ${
+            !isBuy ? 'bg-down text-white' : 'text-sub hover:text-txt'
           }`}
         >
           SELL {baseAsset}
         </button>
       </div>
 
+      {/* Market / Limit */}
+      <div className="seg">
+        {[
+          { id: 'market', label: 'Market' },
+          { id: 'limit', label: 'Limit' },
+        ].map((t) => (
+          <button key={t.id} onClick={() => setOrderType(t.id)} data-active={orderType === t.id}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       {/* Limit price */}
       {isLimit && (
         <div>
-          <div className="mb-1 flex items-center justify-between text-xs text-sub">
+          <div className="mb-1.5 flex items-center justify-between text-xs text-sub">
             <span>Limit Price</span>
             <span className="font-mono">mkt {fmtPrice(price, dp)}</span>
           </div>
-          <div className="flex items-center rounded-md border border-border bg-panel2 px-2">
-            <span className="text-sub">$</span>
+          <div className="field">
+            <span className="shrink-0 text-xs text-sub">$</span>
             <input
               type="number"
               value={limitPrice}
               placeholder={isBuy ? 'below market (accumulate)' : 'above market (distribute)'}
               onChange={(e) => setLimitPrice(e.target.value)}
-              className="w-full bg-transparent px-2 py-2 font-mono text-sm text-accent outline-none placeholder:text-sub/40"
             />
           </div>
         </div>
@@ -138,24 +131,26 @@ export default function SpotForm() {
       {/* Amount */}
       {isBuy ? (
         <div>
-          <div className="mb-1 flex items-center justify-between text-xs text-sub">
+          <div className="mb-1.5 flex items-center justify-between text-xs text-sub">
             <span>Spend (USDT)</span>
-            <span className="font-mono">Avail: {usd(balance)}</span>
+            <span className="font-mono">
+              Avail: <span className="text-txt">{usd(balance)}</span>
+            </span>
           </div>
-          <div className="flex items-center rounded-md border border-border bg-panel2 px-2">
-            <span className="text-sub">$</span>
+          <div className="field">
+            <span className="shrink-0 text-xs text-sub">$</span>
             <input
               type="number"
               value={spend}
               min={0}
               placeholder="0.00"
               onChange={(e) => setSpend(e.target.value)}
-              className="w-full bg-transparent px-2 py-2 font-mono text-sm text-txt outline-none placeholder:text-sub/40"
             />
+            <span className="shrink-0 text-xs text-sub">USDT</span>
           </div>
-          <div className="mt-1 flex justify-between gap-1">
+          <div className="mt-2 flex gap-1">
             {[0.25, 0.5, 0.75, 1].map((p) => (
-              <button key={p} onClick={() => setSpendPct(p)} className="flex-1 rounded bg-panel2 py-0.5 text-[10px] font-semibold text-sub hover:text-txt">
+              <button key={p} onClick={() => setSpendPct(p)} className="chip flex-1">
                 {p * 100}%
               </button>
             ))}
@@ -163,24 +158,25 @@ export default function SpotForm() {
         </div>
       ) : (
         <div>
-          <div className="mb-1 flex items-center justify-between text-xs text-sub">
+          <div className="mb-1.5 flex items-center justify-between text-xs text-sub">
             <span>Amount ({baseAsset})</span>
-            <span className="font-mono">Held: {fmtQty(holding.qty)}</span>
+            <span className="font-mono">
+              Held: <span className="text-txt">{fmtQty(holding.qty)}</span>
+            </span>
           </div>
-          <div className="flex items-center rounded-md border border-border bg-panel2 px-2">
+          <div className="field">
             <input
               type="number"
               value={sellQty}
               min={0}
               placeholder="0.00"
               onChange={(e) => setSellQty(e.target.value)}
-              className="w-full bg-transparent px-2 py-2 font-mono text-sm text-txt outline-none placeholder:text-sub/40"
             />
-            <span className="text-xs text-sub">{baseAsset}</span>
+            <span className="shrink-0 text-xs text-sub">{baseAsset}</span>
           </div>
-          <div className="mt-1 flex justify-between gap-1">
+          <div className="mt-2 flex gap-1">
             {[0.25, 0.5, 0.75, 1].map((p) => (
-              <button key={p} onClick={() => setSellPct(p)} className="flex-1 rounded bg-panel2 py-0.5 text-[10px] font-semibold text-sub hover:text-txt">
+              <button key={p} onClick={() => setSellPct(p)} className="chip flex-1">
                 {p * 100}%
               </button>
             ))}
@@ -189,8 +185,8 @@ export default function SpotForm() {
       )}
 
       {/* Preview */}
-      <div className="space-y-1 rounded-md bg-panel2/60 p-2 font-mono text-xs">
-        <Row label={isLimit ? 'Limit Price' : 'Market Price'} value={fmtPrice(px, dp)} valueClass={isLimit ? 'text-accent' : 'text-txt'} />
+      <div className="space-y-1.5 border-t border-border pt-3 text-xs">
+        <Row label={isLimit ? 'Limit Price' : 'Market Price'} value={fmtPrice(px, dp)} />
         {isBuy ? (
           <>
             <Row label="You receive (est.)" value={`${fmtQty(buyPrev.coins)} ${baseAsset}`} valueClass="text-up font-semibold" />
@@ -208,12 +204,12 @@ export default function SpotForm() {
         )}
       </div>
 
-      {error && <div className="rounded bg-down/10 px-2 py-1 text-xs text-down">{error}</div>}
+      {error && <div className="rounded-lg bg-down/10 px-3 py-2 text-xs text-down">{error}</div>}
 
       <button
         onClick={submit}
-        className={`w-full rounded-md py-2.5 text-sm font-bold transition-colors ${
-          isBuy ? 'bg-up text-black hover:brightness-110' : 'bg-down text-black hover:brightness-110'
+        className={`w-full rounded-full py-2.5 text-sm font-semibold text-white transition hover:brightness-110 ${
+          isBuy ? 'bg-up' : 'bg-down'
         }`}
       >
         {isLimit
@@ -221,7 +217,7 @@ export default function SpotForm() {
           : `${isBuy ? 'Buy' : 'Sell'} ${baseAsset}`}
       </button>
 
-      <p className="text-center text-[10px] text-sub/60">
+      <p className="text-center text-[11px] leading-relaxed text-sub/70">
         {isLimit
           ? `Limit ${isBuy ? 'buy di bawah harga = akumulasi' : 'sell di atas harga = distribusi'}. Bisa juga klik langsung di chart.`
           : `Spot ${symbol}: kamu memiliki koinnya langsung — tanpa leverage & likuidasi.`}
@@ -232,9 +228,9 @@ export default function SpotForm() {
 
 function Row({ label, value, valueClass = 'text-txt' }) {
   return (
-    <div className="flex justify-between">
+    <div className="flex items-center justify-between gap-2">
       <span className="text-sub">{label}</span>
-      <span className={valueClass}>{value}</span>
+      <span className={`font-mono ${valueClass}`}>{value}</span>
     </div>
   )
 }

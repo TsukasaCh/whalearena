@@ -10,8 +10,8 @@ body,
 
 body {
   margin: 0;
-  background: #0b0e11;
-  color: #eaecef;
+  background: #000000;
+  color: #f7f7f7;
   font-family: Inter, system-ui, sans-serif;
   overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
@@ -20,14 +20,14 @@ body {
 /* Thin dark scrollbars to match exchange UI */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2b3139 transparent;
+  scrollbar-color: #2b2b2b transparent;
 }
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #2b3139;
+  background: #2b2b2b;
   border-radius: 8px;
 }
 *::-webkit-scrollbar-track {
@@ -40,7 +40,7 @@ input[type='range'].joystick {
   appearance: none;
   height: 6px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #FF5252 0%, #2b3139 50%, #00E676 100%);
+  background: linear-gradient(90deg, #ca3f64 0%, #2b2b2b 50%, #25a750 100%);
   outline: none;
 }
 input[type='range'].joystick::-webkit-slider-thumb {
@@ -49,17 +49,17 @@ input[type='range'].joystick::-webkit-slider-thumb {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #eaecef;
-  border: 3px solid #0b0e11;
+  background: #f7f7f7;
+  border: 3px solid #121212;
   cursor: grab;
-  box-shadow: 0 0 0 1px #2b3139;
+  box-shadow: 0 0 0 1px #2b2b2b;
 }
 input[type='range'].joystick::-moz-range-thumb {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #eaecef;
-  border: 3px solid #0b0e11;
+  background: #f7f7f7;
+  border: 3px solid #121212;
   cursor: grab;
 }
 
@@ -68,7 +68,7 @@ input[type='range'].lev {
   appearance: none;
   height: 4px;
   border-radius: 999px;
-  background: #2b3139;
+  background: #2b2b2b;
   outline: none;
 }
 input[type='range'].lev::-webkit-slider-thumb {
@@ -77,14 +77,89 @@ input[type='range'].lev::-webkit-slider-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #f0b90b;
+  background: #f7f7f7;
   cursor: pointer;
 }
 input[type='range'].lev::-moz-range-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #f0b90b;
+  background: #f7f7f7;
   border: none;
   cursor: pointer;
+}
+
+/* Numbers: UI face with tabular figures (OKX-style) instead of a monospace font */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+}
+
+/* No native spinners on numeric inputs */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 1px solid rgba(247, 247, 247, 0.55);
+  outline-offset: 1px;
+}
+
+@layer components {
+  /* pill buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-txt text-black hover:bg-white/80;
+  }
+  .btn-ghost {
+    @apply bg-panel2 text-txt hover:bg-panel3;
+  }
+  .btn-outline {
+    @apply border border-panel3 text-txt hover:border-sub;
+  }
+  .btn-sm {
+    @apply px-3 py-1 text-xs;
+  }
+  /* cards / panels */
+  .card {
+    @apply rounded-2xl bg-panel;
+  }
+  /* filled input shell (label + input + unit inside) */
+  .field {
+    @apply flex items-center gap-2 rounded-lg border border-transparent bg-panel2 px-3 transition-colors focus-within:border-sub hover:border-panel3;
+  }
+  .field > input {
+    @apply w-full min-w-0 bg-transparent py-2 font-mono text-sm text-txt outline-none placeholder:text-sub/50;
+  }
+  /* segmented control */
+  .seg {
+    @apply flex rounded-lg bg-panel2 p-0.5 text-xs;
+  }
+  .seg > button {
+    @apply flex-1 rounded-md py-1.5 font-semibold text-sub transition-colors hover:text-txt;
+  }
+  .seg > button[data-active='true'] {
+    @apply bg-panel3 text-txt;
+  }
+  /* small quick-pick chips (25% / 50% / 10x …) */
+  .chip {
+    @apply rounded-md bg-panel2 px-2 py-1 text-[11px] font-medium text-sub transition-colors hover:bg-panel3 hover:text-txt;
+  }
+  .chip[data-active='true'] {
+    @apply bg-panel3 text-txt;
+  }
+  /* tiny uppercase-free caption used above values */
+  .label {
+    @apply text-xs text-sub;
+  }
 }

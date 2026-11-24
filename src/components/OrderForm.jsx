@@ -68,11 +68,32 @@ export default function OrderForm() {
   // leave room for the fee (charged on notional = margin × leverage)
   const quickPct = (p) => setMargin(Math.floor((balance * p) / (1 + leverage * feeRate)))
   const disabled = oppSide
+  const isLong = side === 'long'
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4 text-xs">
+      {/* Long / Short */}
+      <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-0.5">
+        <button
+          onClick={() => setSide('long')}
+          className={`rounded-md py-2 text-sm font-semibold transition-colors ${
+            isLong ? 'bg-up text-white' : 'text-sub hover:text-txt'
+          }`}
+        >
+          Long
+        </button>
+        <button
+          onClick={() => setSide('short')}
+          className={`rounded-md py-2 text-sm font-semibold transition-colors ${
+            !isLong ? 'bg-down text-white' : 'text-sub hover:text-txt'
+          }`}
+        >
+          Short
+        </button>
+      </div>
+
       {/* Market / Limit */}
-      <div className="flex rounded-md bg-panel2 p-0.5 text-xs">
+      <div className="flex items-center gap-4 border-b border-border text-[13px]">
         {[
           { id: 'market', label: 'Market' },
           { id: 'limit', label: 'Limit' },
@@ -80,40 +101,21 @@ export default function OrderForm() {
           <button
             key={t.id}
             onClick={() => setOrderType(t.id)}
-            className={`flex-1 rounded py-1 font-semibold transition-colors ${
-              orderType === t.id ? 'bg-panel text-txt shadow' : 'text-sub hover:text-txt'
+            className={`-mb-px border-b-2 pb-2 font-semibold transition-colors ${
+              orderType === t.id ? 'border-txt text-txt' : 'border-transparent text-sub hover:text-txt'
             }`}
           >
             {t.label}
           </button>
         ))}
-      </div>
-
-      {/* Long / Short */}
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => setSide('long')}
-          className={`rounded-md py-2 text-sm font-bold transition-colors ${
-            side === 'long' ? 'bg-up text-black' : 'bg-panel2 text-sub hover:text-txt'
-          }`}
-        >
-          LONG
-        </button>
-        <button
-          onClick={() => setSide('short')}
-          className={`rounded-md py-2 text-sm font-bold transition-colors ${
-            side === 'short' ? 'bg-down text-black' : 'bg-panel2 text-sub hover:text-txt'
-          }`}
-        >
-          SHORT
-        </button>
+        <span className="ml-auto pb-2 font-mono text-[11px] text-sub">Avail {usd(balance)}</span>
       </div>
 
       {/* Leverage */}
       <div>
-        <div className="mb-1 flex items-center justify-between text-xs text-sub">
+        <div className="mb-2 flex items-center justify-between text-sub">
           <span>Leverage</span>
-          <span className="font-mono font-semibold text-gold">{leverage}x</span>
+          <span className="rounded-md bg-panel2 px-2 py-0.5 font-mono text-[13px] font-semibold text-txt">{leverage}x</span>
         </div>
         <input
           type="range"
@@ -124,45 +126,10 @@ export default function OrderForm() {
           value={leverage}
           onChange={(e) => setLeverage(Number(e.target.value))}
         />
-        <div className="mt-1 flex justify-between gap-1">
+        <div className="mt-2 flex gap-1">
           {[5, 10, 25, 50, 100].map((l) => (
-            <button
-              key={l}
-              onClick={() => setLeverage(l)}
-              className={`flex-1 rounded py-0.5 text-[10px] font-semibold ${
-                leverage === l ? 'bg-gold/20 text-gold' : 'bg-panel2 text-sub hover:text-txt'
-              }`}
-            >
+            <button key={l} onClick={() => setLeverage(l)} data-active={leverage === l} className="chip flex-1">
               {l}x
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Margin */}
-      <div>
-        <div className="mb-1 flex items-center justify-between text-xs text-sub">
-          <span>Margin (Collateral)</span>
-          <span className="font-mono">Avail: {usd(balance)}</span>
-        </div>
-        <div className="flex items-center rounded-md border border-border bg-panel2 px-2">
-          <span className="text-sub">$</span>
-          <input
-            type="number"
-            value={margin}
-            min={0}
-            onChange={(e) => setMargin(e.target.value)}
-            className="w-full bg-transparent px-2 py-2 font-mono text-sm text-txt outline-none"
-          />
-        </div>
-        <div className="mt-1 flex justify-between gap-1">
-          {[0.25, 0.5, 0.75, 1].map((p) => (
-            <button
-              key={p}
-              onClick={() => quickPct(p)}
-              className="flex-1 rounded bg-panel2 py-0.5 text-[10px] font-semibold text-sub hover:text-txt"
-            >
-              {p * 100}%
             </button>
           ))}
         </div>
@@ -171,80 +138,65 @@ export default function OrderForm() {
       {/* Limit price */}
       {isLimit && (
         <div>
-          <div className="mb-1 flex items-center justify-between text-xs text-sub">
-            <span>Limit Price</span>
-            <span className="font-mono">mkt {fmtPrice(price, dp)}</span>
+          <div className="mb-1.5 flex items-center justify-between text-sub">
+            <span>Limit price</span>
+            <span className="font-mono">Market {fmtPrice(price, dp)}</span>
           </div>
-          <div className="flex items-center rounded-md border border-border bg-panel2 px-2">
-            <span className="text-sub">$</span>
+          <div className="field">
             <input
               type="number"
               value={limitPrice}
               placeholder={side === 'long' ? 'below market' : 'above market'}
               onChange={(e) => setLimitPrice(e.target.value)}
-              className="w-full bg-transparent px-2 py-2 font-mono text-sm text-accent outline-none placeholder:text-sub/40"
             />
+            <span className="shrink-0 text-sub">USDT</span>
           </div>
         </div>
       )}
 
+      {/* Margin */}
+      <div>
+        <div className="mb-1.5 text-sub">Margin (collateral)</div>
+        <div className="field">
+          <input type="number" value={margin} min={0} onChange={(e) => setMargin(e.target.value)} />
+          <span className="shrink-0 text-sub">USDT</span>
+        </div>
+        <div className="mt-2 flex gap-1">
+          {[0.25, 0.5, 0.75, 1].map((p) => (
+            <button key={p} onClick={() => quickPct(p)} className="chip flex-1">
+              {p * 100}%
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* SL / TP */}
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <div className="mb-1 text-xs text-sub">Stop Loss</div>
-          <input
-            type="number"
-            value={sl}
-            placeholder="—"
-            onChange={(e) => setSl(e.target.value)}
-            className="w-full rounded-md border border-border bg-panel2 px-2 py-2 font-mono text-sm text-down outline-none placeholder:text-sub/40"
-          />
+          <div className="mb-1.5 text-sub">Take profit</div>
+          <div className="field">
+            <input type="number" value={tp} placeholder="—" onChange={(e) => setTp(e.target.value)} className="!text-up" />
+          </div>
         </div>
         <div>
-          <div className="mb-1 text-xs text-sub">Take Profit</div>
-          <input
-            type="number"
-            value={tp}
-            placeholder="—"
-            onChange={(e) => setTp(e.target.value)}
-            className="w-full rounded-md border border-border bg-panel2 px-2 py-2 font-mono text-sm text-up outline-none placeholder:text-sub/40"
-          />
+          <div className="mb-1.5 text-sub">Stop loss</div>
+          <div className="field">
+            <input type="number" value={sl} placeholder="—" onChange={(e) => setSl(e.target.value)} className="!text-down" />
+          </div>
         </div>
       </div>
 
-      {/* Preview */}
-      <div className="space-y-1 rounded-md bg-panel2/60 p-2 font-mono text-xs">
-        {preview.dca && (
-          <>
-            <Row label="Current Entry" value={fmtPrice(position.entry, dp)} valueClass="text-sub" />
-            <Row label="→ New Avg Entry" value={fmtPrice(preview.avg, dp)} valueClass="text-gold font-semibold" />
-          </>
-        )}
-        <Row label={preview.dca ? 'Total Size' : 'Position Size'} value={usd(preview.notional)} />
-        <Row label={preview.dca ? 'Total Quantity' : 'Quantity'} value={`${fmtQty(preview.qty)} ${baseAsset}`} />
-        <Row
-          label={`Fee ${isLimit ? 'maker' : 'taker'} (${fmt(feeRate * 100, 2)}%)`}
-          value={usd((Number(margin) || 0) * leverage * feeRate)}
-          valueClass="text-sub"
-        />
-        <Row
-          label={preview.dca ? '→ New Liq. Price' : 'Est. Liq. Price'}
-          value={fmtPrice(preview.liq, dp)}
-          valueClass="text-down font-semibold"
-        />
-      </div>
-
-      {error && <div className="rounded bg-down/10 px-2 py-1 text-xs text-down">{error}</div>}
+      {error && <div className="rounded-lg bg-down/10 px-3 py-2 text-down">{error}</div>}
 
       <button
         onClick={submit}
         disabled={disabled}
-        className={`w-full rounded-md py-2.5 text-sm font-bold transition-colors ${
+        className={`w-full rounded-full px-3 py-2.5 text-sm font-semibold transition-[filter,background-color] ${
           disabled
             ? 'cursor-not-allowed bg-panel2 text-sub'
-            : side === 'long'
-              ? 'bg-up text-black hover:brightness-110'
-              : 'bg-down text-black hover:brightness-110'
+            : isLong
+              ? 'bg-up text-white hover:brightness-110'
+              : 'bg-down text-white hover:brightness-110'
         }`}
       >
         {oppSide
@@ -257,15 +209,36 @@ export default function OrderForm() {
               ? `+ Tambah ${side.toUpperCase()} (DCA)`
               : `Open ${side.toUpperCase()} ${leverage}x`}
       </button>
+
+      {/* Preview */}
+      <div className="space-y-1.5">
+        {preview.dca && (
+          <>
+            <Row label="Current entry" value={fmtPrice(position.entry, dp)} valueClass="text-sub" />
+            <Row label="→ New avg entry" value={fmtPrice(preview.avg, dp)} valueClass="text-gold font-semibold" />
+          </>
+        )}
+        <Row label={preview.dca ? 'Total size' : 'Position size'} value={usd(preview.notional)} />
+        <Row label={preview.dca ? 'Total quantity' : 'Quantity'} value={`${fmtQty(preview.qty)} ${baseAsset}`} />
+        <Row
+          label={`Fee ${isLimit ? 'maker' : 'taker'} (${fmt(feeRate * 100, 2)}%)`}
+          value={usd((Number(margin) || 0) * leverage * feeRate)}
+        />
+        <Row
+          label={preview.dca ? '→ New liq. price' : 'Est. liq. price'}
+          value={fmtPrice(preview.liq, dp)}
+          valueClass="text-down font-semibold"
+        />
+      </div>
     </div>
   )
 }
 
 function Row({ label, value, valueClass = 'text-txt' }) {
   return (
-    <div className="flex justify-between">
+    <div className="flex justify-between gap-3">
       <span className="text-sub">{label}</span>
-      <span className={valueClass}>{value}</span>
+      <span className={`font-mono ${valueClass}`}>{value}</span>
     </div>
   )
 }
