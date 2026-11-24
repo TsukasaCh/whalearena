@@ -251,6 +251,34 @@ how much of the order is **visible** (1 – 50 %).
 Server side it is one field on the resting order (`visFrac`, set by `icebergFrac()`
 in `server/engine.js`); `Market.restingOrders()` publishes only the tip.
 
+### Spot grid bot
+
+The **Grid** tab of the Spot order form starts a grid trading bot. Pick a price
+range, a number of grids and an investment; the bot splits the range into equal
+steps and keeps a ladder of resting limit orders on it — **buys below the price,
+sells above**. Whenever a buy fills it places a sell one level up, and whenever a
+sell fills it places a buy one level down, so every completed round trip banks one
+grid step minus two maker fees while price chops inside the range.
+
+- **Start**: buy orders go on every level below the market; the coins for the sell
+  ladder are bought at market up front (taker fee) and rest on the levels above.
+  The level next to the price is left empty — that is where the first flip lands.
+- **Isolated funds**: the investment leaves the balance and lives in the bot (idle
+  USDT / coins plus what sits in its orders). It all still counts toward equity.
+- **Real liquidity**: bot orders are ordinary spot limit orders — visible on the
+  book and the chart (`GRID B` / `GRID S` lines), fillable by anyone, but not
+  draggable and not affected by "Cancel all".
+- **Out of range**: below the range the bot ends up holding coins, above it USDT,
+  and waits. There is no automatic stop.
+- **Stop**: cancels the ladder, returns USDT to the balance and coins to the spot
+  holding (carrying whatever the bot has not paid back as their cost basis).
+- The bot card shows total PnL split into **grid profit** (banked round trips) and
+  **floating PnL** (the coins it still holds), plus the cycle count.
+
+Limits: 2 – 50 grids, grid step at least 0.2 % of the lower price, about $1 minimum
+per grid, one bot per symbol and five per account (`GRID_*` in `server/engine.js`).
+Bots are stored in the `grids` column of the account and resume after a restart.
+
 ### Algo orders: TWAP & VWAP
 
 A big market order eats straight through the book and pays for it in slippage.

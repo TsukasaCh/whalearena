@@ -8,6 +8,7 @@ import SpotPending from './SpotPending'
 import Staking from './Staking'
 import OrderBook from './OrderBook'
 import AlgoOrders from './AlgoOrders'
+import GridBots from './GridBot'
 
 // One trading surface for a single mode — Spot or Perpetual — kept separate like
 // a real exchange. The chart is shared; on wide screens the order book gets its
@@ -47,6 +48,7 @@ export default function RetailPanel({ mode = 'perp' }) {
         <div className="space-y-4 p-4">
           {isSpot ? (
             <>
+              <GridBots />
               <AlgoOrders spot />
               <SpotPending />
               <SpotHolding />

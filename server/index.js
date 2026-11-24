@@ -193,6 +193,13 @@ wss.on('connection', async (ws, req) => {
         const r = hub.placeAlgo(id, sym, m)
         if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
         persist(id); send(ws, meMsg(id))
+      } else if (m.type === 'gridStart') {
+        const r = hub.startGrid(id, sym, m)
+        if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
+        persist(id); send(ws, meMsg(id, r.event))
+      } else if (m.type === 'gridStop') {
+        const r = hub.stopGrid(id, m.id)
+        if (r.ok) { persist(id); send(ws, meMsg(id, r.event)) }
       } else if (m.type === 'spotAlgo') {
         const r = hub.placeSpotAlgo(id, sym, m)
         if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
@@ -289,6 +296,11 @@ setInterval(() => {
     for (const c of clients) if (c.user.role === 'trader' && c.user.id === up.userId) send(c.ws, meMsg(up.userId, up.event))
   }
   hub.algoUpdates = []
+  // grid bots that re-armed orders this tick → refresh their owner's state
+  for (const uid of hub.gridUpdates) {
+    for (const c of clients) if (c.user.role === 'trader' && c.user.id === uid) send(c.ws, meMsg(uid))
+  }
+  hub.gridUpdates = []
   // keep a running algo's benchmark (market VWAP) fresh between slices
   if (frame % 8 === 0) for (const c of clients) if (c.user.role === 'trader' && hub.hasAlgos(c.user.id)) send(c.ws, meMsg(c.user.id))
   flushDirty()

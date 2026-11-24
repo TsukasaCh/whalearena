@@ -22,6 +22,13 @@ const ALGO_MIN_INTERVAL = 2 // seconds between child orders
 const ALGO_MIN_SLICE = 1 // USDT margin per child order
 const ALGO_MAX_ACTIVE = 3 // per user, per market
 
+// Spot grid bot limits
+const GRID_MIN = 2
+const GRID_MAX = 50 // grid steps (so up to 50 resting orders)
+const GRID_MAX_BOTS = 5 // per user (one per symbol)
+const GRID_MIN_STEP = 0.002 // step / lower ≥ 0.2% so a round trip clears two maker fees
+const GRID_MIN_ORDER = 1 // USDT value of one grid order
+
 // Staking accrual: the staked balance compounds at STAKE_APY. accruedQty is the
 // current balance (read-only); realize folds the rewards into the stake and
 // resets the clock, tracking lifetime `earned` coins.
@@ -41,6 +48,7 @@ export class MarketHub {
     this.users = new Map() // id -> { id, name, balance, trades, wins, realized, history, spot }
     this.dirty = new Set() // user ids whose wallet changed and needs persisting
     this.algoUpdates = [] // [{ userId, event? }] produced by the last tick's algo pass
+    this.gridUpdates = [] // user ids whose grid bot re-armed orders in the last tick
     // Every symbol runs TWO venues: a futures (perp) market and a spot market,
     // each its own price/book/history. Keyed by vkey(symbol, mode) — the perp key
     // is just the symbol so old saved market rows restore as the futures book.
@@ -94,6 +102,8 @@ export class MarketHub {
       spot: a.spot && typeof a.spot === 'object' ? a.spot : {},
       // staking pocket: { [symbol]: { qty, cost, since, earned } } earning STAKE_APY
       staked: a.staked && typeof a.staked === 'object' ? a.staked : {},
+      // spot grid bots: [{ id, symbol, lower, upper, grids, invest, usdt, coins, … }]
+      grids: Array.isArray(a.grids) ? a.grids : [],
     }
     this.users.set(id, u)
     // restore persisted positions / resting orders into their markets
@@ -112,7 +122,7 @@ export class MarketHub {
   persistState(id) {
     const u = this.users.get(id)
     if (!u) return null
-    return { balance: u.balance, trades: u.trades, wins: u.wins, realized: u.realized, books: this.userBooks(id), history: u.history, spot: u.spot, staked: u.staked }
+    return { balance: u.balance, trades: u.trades, wins: u.wins, realized: u.realized, books: this.userBooks(id), history: u.history, spot: u.spot, staked: u.staked, grids: u.grids || [] }
   }
 
   userBooks(id) {
@@ -168,6 +178,10 @@ export class MarketHub {
   //  · TWAP/VWAP → the margin + fee still reserved for its unexecuted slices
   userLockedValue(id) {
     let v = 0
+    for (const g of this.users.get(id)?.grids || []) {
+      const gm = this.market(g.symbol, 'spot')
+      v += (g.usdt || 0) + (g.coins || 0) * (gm ? gm.price : 0)
+    }
     for (const m of this.markets.values()) {
       const book = m.books.get(id)
       if (!book) continue
@@ -243,6 +257,7 @@ export class MarketHub {
       books,
       spot: u.spot,
       staked: u.staked,
+      grids: (u.grids || []).map(({ flips, ...g }) => g),
     }
   }
 
@@ -437,6 +452,7 @@ export class MarketHub {
   spotFill(uid, { symbol, side, price, qty, order }) {
     const u = this.users.get(uid)
     if (!u) return
+    if (order.grid) return this.gridFill(u, { symbol, side, price, qty, order })
     if (side === 'long') {
       const feeShare = (order.fee || 0) * (qty / order.qty)
       const h = u.spot[symbol] || { qty: 0, cost: 0 }
@@ -466,7 +482,7 @@ export class MarketHub {
     const keep = []
     let changed = false
     for (const o of book.pendingOrders) {
-      if (!o.spot || (orderId && o.id !== orderId)) { keep.push(o); continue }
+      if (!o.spot || o.grid || (orderId && o.id !== orderId)) { keep.push(o); continue }
       changed = true
       const rem = Math.max(0, o.qty - o.filled)
       const frac = rem / (o.qty || 1)
@@ -492,7 +508,7 @@ export class MarketHub {
     if (!u || !m) return { ok: false }
     const book = m.books.get(id)
     if (!book) return { ok: false }
-    const o = book.pendingOrders.find((x) => x.id === orderId && x.spot)
+    const o = book.pendingOrders.find((x) => x.id === orderId && x.spot && !x.grid)
     if (!o) return { ok: false }
     if (o.filled > 1e-9) return { ok: false, error: 'Order kefill sebagian — tidak bisa digeser' }
     price = m.r(+price)
@@ -1017,6 +1033,202 @@ export class MarketHub {
     return out
   }
 
+  // ── spot grid bot ─────────────────────────────────────────────────────────
+  // A grid bot splits a price range [lower, upper] into `grids` equal steps and
+  // keeps a ladder of resting spot limit orders on it: buys below the price,
+  // sells above. Every time a buy at level i fills it places a sell one level
+  // up; every time a sell fills it places a buy one level down — so each round
+  // trip banks one grid step (minus maker fees) while price chops in the range.
+  //
+  // The bot's funds are isolated from the wallet: `invest` USDT leaves the
+  // balance and lives in the bot as
+  //   usdt / coins              idle inside the bot
+  //   usdtLocked / coinsLocked  sitting in its resting buy / sell orders
+  // Its orders are ordinary spot limit orders tagged { grid, level }, so they are
+  // real book liquidity and fill through the normal matching paths; fills are
+  // routed to gridFill() instead of the wallet. Everything counts toward equity.
+  // Stopping cancels the ladder and returns USDT to the balance and coins to the
+  // spot holding (cost basis = what the bot still owes of the investment).
+  gridLevel(g, i) { return g.lower + ((g.upper - g.lower) * i) / g.grids }
+
+  startGrid(id, symbol, { lower, upper, grids, invest }) {
+    const u = this.users.get(id)
+    const m = this.market(symbol, 'spot')
+    if (!u || !m) return { ok: false, error: 'No session' }
+    lower = +lower; upper = +upper; invest = Math.floor((+invest || 0) * 100) / 100
+    grids = Math.round(+grids)
+    if (!(lower > 0) || !(upper > lower) || !Number.isFinite(upper)) return { ok: false, error: 'Range harga tidak valid (lower < upper)' }
+    if (!(grids >= GRID_MIN && grids <= GRID_MAX)) return { ok: false, error: `Jumlah grid harus ${GRID_MIN} – ${GRID_MAX}` }
+    if (!(invest > 0)) return { ok: false, error: 'Investasi tidak valid' }
+    if (invest > u.balance) return { ok: false, error: 'Saldo tidak cukup' }
+    u.grids = u.grids || []
+    if (u.grids.some((g) => g.symbol === symbol)) return { ok: false, error: `Sudah ada grid bot ${symbol} — stop dulu yang lama` }
+    if (u.grids.length >= GRID_MAX_BOTS) return { ok: false, error: `Maksimal ${GRID_MAX_BOTS} grid bot aktif` }
+    const P = m.price
+    if (!(P > lower && P < upper)) return { ok: false, error: 'Harga pasar harus berada di dalam range grid' }
+    const step = (upper - lower) / grids
+    // a round trip pays the maker fee twice — the step has to clear that with room to spare
+    if (step / lower < GRID_MIN_STEP) return { ok: false, error: `Grid terlalu rapat — jarak antar grid minimal ${GRID_MIN_STEP * 100}% (kurangi grid atau lebarkan range)` }
+    const g = {
+      id: 'g' + Math.random().toString(36).slice(2, 9),
+      symbol, lower: m.r(lower), upper: m.r(upper), grids, invest,
+      usdt: invest, coins: 0, usdtLocked: 0, coinsLocked: 0,
+      profit: 0, cycles: 0, fees: 0, flips: [],
+      startPrice: m.r(P), startedAt: Date.now(),
+    }
+    const price = (i) => m.r(this.gridLevel(g, i))
+    // k = highest level strictly below the market. Buys rest on 0..k; sells on
+    // k+2..grids. Level k+1 is left empty — it is where the first flip lands.
+    let k = -1
+    for (let i = 0; i <= grids; i++) if (price(i) < P) k = i
+    if (k < 0 || k >= grids) return { ok: false, error: 'Harga pasar harus berada di dalam range grid' }
+    const sells = grids - k - 1
+    let buyCost = 0
+    for (let i = 0; i <= k; i++) buyCost += price(i) * (1 + MAKER_FEE)
+    // coins for the sell ladder are bought at market up front (taker fee + a little slippage room)
+    const q = Math.floor((invest / (buyCost + sells * P * (1 + TAKER_FEE) * 1.003)) * 1e6) / 1e6
+    if (!(q > 0) || q * price(0) < GRID_MIN_ORDER) return { ok: false, error: `Investasi terlalu kecil — minimal ~$${GRID_MIN_ORDER} per grid` }
+    g.qty = q
+    const book = m.book(id)
+    u.balance = round(u.balance - invest)
+    let qs = q
+    if (sells > 0) {
+      const { price: avg, userQty } = m.walkBook('long', sells * q, id)
+      // never spend the USDT the buy ladder needs
+      const afford = Math.floor(((g.usdt - buyCost * q) / (sells * avg * (1 + TAKER_FEE))) * 1e6) / 1e6
+      qs = Math.max(0, Math.min(q, afford))
+      const cost = sells * qs * avg
+      const fee = cost * TAKER_FEE
+      m.feesCollected += fee
+      m.pendingFlow += Math.max(0, sells * qs - userQty)
+      g.usdt -= cost + fee
+      g.coins += sells * qs
+      g.fees += fee
+      g.entryAvg = m.r(avg)
+    }
+    for (let i = 0; i <= k; i++) this.gridPlace(m, book, g, i, 'long', q)
+    if (qs > 0) for (let i = k + 2; i <= grids; i++) this.gridPlace(m, book, g, i, 'short', qs)
+    u.grids.push(g)
+    this.dirty.add(id)
+    return { ok: true, user: u, symbol, event: { type: 'grid', status: 'started', symbol, grids, lower: g.lower, upper: g.upper, id: Date.now() } }
+  }
+
+  // rest one grid order on the spot book, funded from the bot's idle inventory
+  gridPlace(m, book, g, level, side, qty) {
+    const price = m.r(this.gridLevel(g, level))
+    if (side === 'long') {
+      const unit = price * (1 + MAKER_FEE)
+      qty = Math.min(qty, Math.floor((g.usdt / unit) * 1e6 + 1e-9) / 1e6)
+      if (!(qty > 0)) return false
+      const reserved = qty * unit
+      g.usdt = Math.max(0, g.usdt - reserved)
+      g.usdtLocked += reserved
+      book.pendingOrders.push({ id: 'g' + Math.random().toString(36).slice(2, 9), spot: true, grid: g.id, level, side: 'long', price, qty, filled: 0, fee: qty * price * MAKER_FEE, reservedUsd: reserved })
+    } else {
+      qty = Math.min(qty, Math.floor(g.coins * 1e6 + 1e-9) / 1e6)
+      if (!(qty > 0)) return false
+      g.coins = Math.max(0, g.coins - qty)
+      g.coinsLocked += qty
+      book.pendingOrders.push({ id: 'g' + Math.random().toString(36).slice(2, 9), spot: true, grid: g.id, level, side: 'short', price, qty, filled: 0, costBasis: 0 })
+    }
+    return true
+  }
+
+  // a grid order (partly) filled: move the funds inside the bot and, once the
+  // order is complete, queue its mirror order for the next tick
+  gridFill(u, { symbol, side, price, qty, order }) {
+    const g = (u.grids || []).find((x) => x.id === order.grid)
+    if (!g) return
+    const done = order.qty - order.filled <= 1e-9
+    if (side === 'long') {
+      const share = (order.reservedUsd || 0) * (qty / order.qty)
+      g.usdtLocked = Math.max(0, g.usdtLocked - share)
+      g.coins += qty
+      g.fees += (order.fee || 0) * (qty / order.qty)
+      if (done) g.flips.push({ level: order.level + 1, side: 'short', qty: order.qty })
+    } else {
+      const proceeds = qty * price
+      const fee = proceeds * MAKER_FEE
+      g.coinsLocked = Math.max(0, g.coinsLocked - qty)
+      g.usdt += proceeds - fee
+      g.fees += fee
+      if (done) {
+        // one completed round trip: bought a level lower, sold here, both as maker
+        const buyPx = this.gridLevel(g, order.level - 1)
+        g.profit += order.qty * (order.price - buyPx) - order.qty * (order.price + buyPx) * MAKER_FEE
+        g.cycles += 1
+        g.flips.push({ level: order.level - 1, side: 'long', qty: order.qty })
+      }
+    }
+    this.dirty.add(u.id)
+  }
+
+  // Runs once per tick after every market stepped: place the mirror orders for
+  // grid fills that completed during the tick. Returns the users to refresh.
+  processGrids() {
+    const touched = []
+    for (const u of this.users.values()) {
+      if (!u.grids || !u.grids.length) continue
+      let any = false
+      for (const g of u.grids) {
+        if (!g.flips || !g.flips.length) continue
+        const m = this.market(g.symbol, 'spot')
+        const flips = g.flips
+        g.flips = []
+        if (!m) continue
+        const book = m.book(u.id)
+        for (const f of flips) {
+          if (f.level < 0 || f.level > g.grids) continue
+          // one order per level: skip if that level is somehow already occupied
+          if (book.pendingOrders.some((o) => o.grid === g.id && o.level === f.level)) continue
+          this.gridPlace(m, book, g, f.level, f.side, f.qty)
+        }
+        any = true
+      }
+      if (any) { this.dirty.add(u.id); touched.push(u.id) }
+    }
+    this.gridUpdates = touched
+    return touched
+  }
+
+  stopGrid(id, gridId) {
+    const u = this.users.get(id)
+    const g = u && (u.grids || []).find((x) => x.id === gridId)
+    if (!g) return { ok: false }
+    const m = this.market(g.symbol, 'spot')
+    const book = m && m.books.get(id)
+    if (book) {
+      // pull the ladder: unfilled buys hand their USDT back, unfilled sells their coins
+      const keep = []
+      for (const o of book.pendingOrders) {
+        if (o.grid !== g.id) { keep.push(o); continue }
+        const rem = Math.max(0, o.qty - (o.filled || 0))
+        if (o.side === 'long') g.usdt += (o.reservedUsd || 0) * (rem / (o.qty || 1))
+        else g.coins += rem
+      }
+      book.pendingOrders = keep
+      m.dropIfEmpty(id)
+    }
+    const usdtOut = Math.floor(g.usdt * 100 + 1e-6) / 100
+    const coinsOut = Math.floor(g.coins * 1e6 + 1e-9) / 1e6
+    u.balance = round(u.balance + usdtOut)
+    if (coinsOut > 0) {
+      // the coins go to the spot holding carrying whatever the bot has not paid back yet,
+      // so selling them later realises the grid's total PnL
+      const h = u.spot[g.symbol] || { qty: 0, cost: 0 }
+      h.qty = r8(h.qty + coinsOut)
+      h.cost = round(h.cost + Math.max(0, g.invest - usdtOut))
+      u.spot[g.symbol] = h
+    }
+    u.grids = u.grids.filter((x) => x.id !== g.id)
+    this.dirty.add(id)
+    const value = usdtOut + coinsOut * (m ? m.price : 0)
+    return {
+      ok: true, user: u, symbol: g.symbol,
+      event: { type: 'grid', status: 'stopped', symbol: g.symbol, profit: round(g.profit), pnl: round(value - g.invest), cycles: g.cycles, id: Date.now() },
+    }
+  }
+
   // does this user have a TWAP/VWAP running anywhere? (drives periodic refreshes)
   hasAlgos(id) {
     for (const m of this.markets.values()) { const b = m.books.get(id); if (b && b.algos && b.algos.length) return true }
@@ -1031,6 +1243,7 @@ export class MarketHub {
     const deltas = []
     for (const m of this.markets.values()) deltas.push(m.step())
     this.processAlgos()
+    this.processGrids()
     return deltas
   }
 

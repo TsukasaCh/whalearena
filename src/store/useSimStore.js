@@ -53,6 +53,7 @@ export const useSim = create(
     books: {}, // { [symbol]: { position, pendingOrders } }
     spot: {}, // spot holdings { [symbol]: { qty, cost } }
     staked: {}, // staking pocket { [symbol]: { qty, cost, since, earned } }
+    grids: [], // running spot grid bots [{ id, symbol, lower, upper, grids, invest, usdt, coins, … }]
     equity: 0,
     unrealized: 0,
     // mirrors of the ACTIVE symbol's book (kept so existing components work)
@@ -167,6 +168,7 @@ export const useSim = create(
         books,
         spot: m.spot || {},
         staked: m.staked || {},
+        grids: m.grids || [],
         equity: m.equity ?? get().equity,
         unrealized: m.unrealized ?? get().unrealized,
         position: b.position,
@@ -176,7 +178,7 @@ export const useSim = create(
         spotAlgos: spotAlgosOf(books, get().symbol),
       }
       if (m.now) patch.clockOffset = m.now - Date.now()
-      if (m.event) patch.toast = m.event
+      if (m.event && m.event.type !== 'gridFill') patch.toast = m.event
       set(patch)
     },
 
@@ -237,6 +239,8 @@ export const useSim = create(
     placeLimit: (payload) => { const s = get(); s._send && s._send({ type: 'limit', symbol: s.symbol, ...payload }) },
     placeAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'algo', symbol: s.symbol, ...payload }) },
     cancelAlgo: (id, symbol, spot) => { const s = get(); s._send && s._send({ type: 'cancelAlgo', symbol: symbol || s.symbol, id, spot: !!spot }) },
+    startGrid: (payload) => { const s = get(); s._send && s._send({ type: 'gridStart', symbol: s.symbol, ...payload }) },
+    stopGrid: (id) => { const s = get(); s._send && s._send({ type: 'gridStop', id }) },
     placeSpotAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'spotAlgo', symbol: s.symbol, ...payload }) },
     cancelLimit: (id) => { const s = get(); s._send && s._send({ type: 'cancelLimit', symbol: s.symbol, id }) },
     moveLimit: (id, price) => { const s = get(); s._send && s._send({ type: 'moveLimit', symbol: s.symbol, id, price }) },

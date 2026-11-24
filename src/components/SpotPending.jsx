@@ -4,7 +4,8 @@ import { usd, fmtPrice, fmtQty } from '../lib/format'
 // Resting SPOT limit orders for the active symbol — buy ladders (accumulate)
 // and sell ladders (distribute). Side long = buy, short = sell.
 export default function SpotPending() {
-  const orders = useSim((s) => s.spotPending)
+  const all = useSim((s) => s.spotPending)
+  const orders = all.filter((o) => !o.grid) // grid-bot orders live in the Grid bot card
   const dp = useSim((s) => s.dp)
   const baseAsset = useSim((s) => s.baseAsset)
   const cancel = useSim((s) => s.spotCancelLimit)

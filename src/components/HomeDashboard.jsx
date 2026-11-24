@@ -6,6 +6,7 @@ import { usd, fmt, fmtPrice, fmtQty, pct, signedUsd, marketCap, usdCompact } fro
 import ShareCard from './ShareCard'
 import { CoinIcon } from './ui'
 import { algoView } from './AlgoOrders'
+import { gridValue } from './GridBot'
 
 const STARTING = 10000
 
@@ -18,6 +19,8 @@ export default function HomeDashboard({ onEnter }) {
   const books = useSim((s) => s.books)
   const spot = useSim((s) => s.spot)
   const staked = useSim((s) => s.staked)
+  const grids = useSim((s) => s.grids)
+  const stopGrid = useSim((s) => s.stopGrid)
   const symbols = useSim((s) => s.symbols)
   const leaderboard = useSim((s) => s.leaderboard)
   const setSymbol = useSim((s) => s.setSymbol)
@@ -35,14 +38,14 @@ export default function HomeDashboard({ onEnter }) {
   const algos = [] // running TWAP / VWAP orders (their unspent margin is locked too)
   for (const [sym, b] of Object.entries(books || {})) {
     if (b.position) positions.push({ symbol: sym, ...b.position })
-    for (const o of b.pendingOrders || []) pending.push({ symbol: sym, ...o })
+    for (const o of b.pendingOrders || []) if (!o.grid) pending.push({ symbol: sym, ...o }) // bot ladders are listed with their bot
     for (const a of b.algos || []) algos.push({ ...a, spot: !!a.spot || sym.endsWith(':spot'), symbol: sym.replace(':spot', '') })
   }
   // spot holdings across every market
   const holdings = []
   for (const [sym, h] of Object.entries(spot || {})) {
     if (!h || h.qty <= 0) continue
-    const price = metaOf(sym).price ?? 0
+    const price = metaOf(sym).spot ?? metaOf(sym).price ?? 0 // spot coins are marked at the SPOT price (as the server does)
     holdings.push({ symbol: sym, qty: h.qty, cost: h.cost, avg: h.qty ? h.cost / h.qty : 0, price, value: h.qty * price, pnl: h.qty * price - h.cost })
   }
   const spotValue = holdings.reduce((s, h) => s + h.value, 0)
@@ -53,6 +56,13 @@ export default function HomeDashboard({ onEnter }) {
     return s + (a.side === 'sell' ? (a.remQty || 0) * (mk.spot ?? mk.price ?? 0) : a.reserved || 0)
   }, 0)
   const perpAlgoCount = algos.length - spotAlgos.length
+  // spot grid bots: their USDT + coins, marked at the spot price
+  const gridRows = (grids || []).map((g) => {
+    const mk = metaOf(g.symbol)
+    const value = gridValue(g, mk.spot ?? mk.price ?? 0)
+    return { ...g, value, pnl: value - g.invest, dp: mk.dp ?? 2 }
+  })
+  const gridTotal = gridRows.reduce((s, g) => s + g.value, 0)
   // staked coins across every market (accrued to now)
   const stakes = []
   for (const [sym, st] of Object.entries(staked || {})) {
@@ -77,7 +87,7 @@ export default function HomeDashboard({ onEnter }) {
   const shareTrade = (h) =>
     setShare({ mode: 'position', symbol: h.symbol, side: h.side, leverage: h.leverage, entry: h.entry, exit: h.exit, dp: metaOf(h.symbol).dp ?? 2, roe: roe(h.pnl, h.margin), pnl: h.pnl, closed: true })
 
-  const futuresValue = equity - balance - spotValue - spotAlgoValue - stakedValue // margin + uPnL + resting limits + futures algos
+  const futuresValue = equity - balance - spotValue - spotAlgoValue - gridTotal - stakedValue // margin + uPnL + resting limits + futures algos
   const totalPct = (totalPnl / STARTING) * 100
   const sideBadge = (long) => `rounded px-1.5 py-0.5 text-[11px] font-semibold ${long ? 'bg-up/15 text-up' : 'bg-down/15 text-down'}`
 
@@ -126,7 +136,7 @@ export default function HomeDashboard({ onEnter }) {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <Tile label="Available" value={usd(balance)} hint="Free balance" />
                 <Tile label="Futures" value={usd(futuresValue)} hint={`${positions.length} open · ${pending.length} resting${perpAlgoCount ? ` · ${perpAlgoCount} algo` : ''}`} onClick={() => onEnter('perp')} />
-                <Tile label="Spot" value={usd(spotValue + spotAlgoValue)} hint={`${holdings.length} coin${holdings.length === 1 ? '' : 's'}${spotAlgos.length ? ` · ${spotAlgos.length} algo` : ''}`} onClick={() => onEnter('spot')} />
+                <Tile label="Spot" value={usd(spotValue + spotAlgoValue + gridTotal)} hint={`${holdings.length} coin${holdings.length === 1 ? '' : 's'}${spotAlgos.length ? ` · ${spotAlgos.length} algo` : ''}${gridRows.length ? ` · ${gridRows.length} grid` : ''}`} onClick={() => onEnter('spot')} />
                 <Tile label="Earn" value={usd(stakedValue)} hint={`${(STAKE_APY * 100).toFixed(0)}% APY staking`} onClick={() => onEnter('spot')} />
               </div>
             </div>
@@ -227,6 +237,36 @@ export default function HomeDashboard({ onEnter }) {
             </Panel>
 
             {/* pending limit orders */}
+            {gridRows.length > 0 && (
+              <Panel title="Grid bots" right={`${gridRows.length} running · ${usd(gridTotal)}`}>
+                <div className="divide-y divide-border">
+                  {gridRows.map((g) => (
+                    <div key={g.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                      <button onClick={() => openMarket(g.symbol, 'spot')} className="flex min-w-0 items-center gap-3 text-left">
+                        <CoinIcon symbol={g.symbol} size={32} />
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-txt">{g.symbol}</span>
+                            <span className="rounded bg-panel2 px-1.5 py-0.5 text-[11px] font-semibold text-txt">Spot grid · {g.grids}</span>
+                          </span>
+                          <span className="mt-0.5 block font-mono text-xs text-sub">
+                            {fmtPrice(g.lower, g.dp)} – {fmtPrice(g.upper, g.dp)} · {g.cycles || 0} cycles · grid profit <span className="text-up">{signedUsd(g.profit || 0)}</span>
+                          </span>
+                        </span>
+                      </button>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <div className="font-mono text-sm font-semibold text-txt">{usd(g.value)}</div>
+                          <div className={`font-mono text-xs ${g.pnl >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(g.pnl)} · {pct((g.pnl / g.invest) * 100)}</div>
+                        </div>
+                        <button onClick={() => stopGrid(g.id)} className="btn btn-outline btn-sm hover:!border-down hover:text-down">Stop</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            )}
+
             {algos.length > 0 && (
               <Panel title="Algo orders" right={`${algos.length} running`}>
                 <div className="divide-y divide-border">

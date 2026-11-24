@@ -102,6 +102,25 @@ export default function Toast() {
     )
   }
 
+  if (toast.type === 'grid') {
+    const started = toast.status === 'started'
+    return (
+      <Shell tone={started ? 'neutral' : (toast.pnl ?? 0) >= 0 ? 'up' : 'down'}>
+        <Body
+          title={started ? 'Grid Bot Started' : 'Grid Bot Stopped'}
+          sub={
+            started
+              ? <>{sym}{toast.grids} grids · {fmtPrice(toast.lower, dp)} – {fmtPrice(toast.upper, dp)}</>
+              : <>{sym}{toast.cycles || 0} cycles · grid profit {signedUsd(toast.profit || 0)}</>
+          }
+        />
+        {!started && (
+          <div className={`ml-2 font-mono text-sm font-semibold ${(toast.pnl ?? 0) >= 0 ? 'text-up' : 'text-down'}`}>{signedUsd(toast.pnl || 0)}</div>
+        )}
+      </Shell>
+    )
+  }
+
   if (toast.type === 'algo') {
     const name = (toast.algo || '').toUpperCase()
     const done = toast.status === 'done'

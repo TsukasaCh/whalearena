@@ -299,7 +299,7 @@ export default function Chart() {
 
     // --- resting limit orders: one draggable price line per order -----------
     const lineTitle = (o) =>
-      `${o.visFrac > 0 ? 'ICEBERG' : 'LIMIT'} ${o.side === 'long' ? 'BUY' : 'SELL'}${o.filled > 1e-6 ? ` ${Math.round((o.filled / o.qty) * 100)}%` : ' ⇕'}`
+      o.grid ? (o.side === 'long' ? 'GRID B' : 'GRID S') : `${o.visFrac > 0 ? 'ICEBERG' : 'LIMIT'} ${o.side === 'long' ? 'BUY' : 'SELL'}${o.filled > 1e-6 ? ` ${Math.round((o.filled / o.qty) * 100)}%` : ' ⇕'}`
     const drawLimits = (orders) => {
       const list = orders || []
       const ids = new Set(list.map((o) => o.id))
@@ -330,7 +330,7 @@ export default function Chart() {
       for (const [key, d] of draggable) {
         if (d.kind === 'limit') {
           const o = activeOrders().find((x) => x.id === key)
-          if (!o || o.filled > 1e-6) continue // partially filled → locked
+          if (!o || o.filled > 1e-6 || o.grid) continue // partially filled or bot-owned → locked
         }
         const ly = series.priceToCoordinate(d.price)
         if (ly == null) continue

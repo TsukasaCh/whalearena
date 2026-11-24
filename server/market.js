@@ -672,7 +672,7 @@ export class Market {
       const done = o.qty - o.filled <= 1e-9
       if (done) book.pendingOrders = book.pendingOrders.filter((x) => x.id !== o.id)
       if (this.spotFill) this.spotFill(uid, { symbol: this.symbol, side: o.side, price: entry, qty: df, order: o })
-      userEvents.push({ userId: uid, symbol: this.symbol, event: { type: 'spotLimitFill', symbol: this.symbol, side: o.side, price: entry, partial: !done, id: Date.now() + Math.random() } })
+      userEvents.push({ userId: uid, symbol: this.symbol, event: { type: o.grid ? 'gridFill' : 'spotLimitFill', symbol: this.symbol, side: o.side, price: entry, partial: !done, id: Date.now() + Math.random() } })
       return df
     }
     const marginShare = o.margin * (df / o.qty)

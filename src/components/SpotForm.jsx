@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSim } from '../store/useSimStore'
 import { TAKER_FEE, MAKER_FEE } from '../lib/trading'
 import { usd, fmt, fmtPrice, fmtQty } from '../lib/format'
+import { GridForm } from './GridBot'
 
 // Spot trading. Market orders buy/sell coins outright (no leverage, no liq).
 // TWAP / VWAP work a large buy or sell as timed market slices.
@@ -26,7 +27,7 @@ export default function SpotForm() {
   const setSpend = (v) => setSpotDraft({ spend: v })
   const setSellQty = (v) => setSpotDraft({ qty: v })
 
-  const [orderType, setOrderType] = useState('market') // 'market' | 'limit' | 'iceberg' | 'twap' | 'vwap'
+  const [orderType, setOrderType] = useState('market') // 'market' | 'limit' | 'iceberg' | 'twap' | 'vwap' | 'grid'
   const [tab, setTab] = useState('buy') // 'buy' | 'sell'
   const [limitPrice, setLimitPrice] = useState('')
   const [error, setError] = useState('')
@@ -104,8 +105,37 @@ export default function SpotForm() {
     }
   }
 
+  // order type switcher (the Grid tab swaps the whole form for the grid bot setup)
+  const typeTabs = (
+    <div className="seg">
+      {[
+        { id: 'market', label: 'Market' },
+        { id: 'limit', label: 'Limit' },
+        { id: 'iceberg', label: 'Iceberg' },
+        { id: 'twap', label: 'TWAP' },
+        { id: 'vwap', label: 'VWAP' },
+        { id: 'grid', label: 'Grid' },
+      ].map((t) => (
+        <button key={t.id} onClick={() => { setOrderType(t.id); setError('') }} data-active={orderType === t.id} className="!px-0 !text-[11px]">
+          {t.label}
+        </button>
+      ))}
+    </div>
+  )
+
+  if (orderType === 'grid') {
+    return (
+      <div className="space-y-3">
+        {typeTabs}
+        <GridForm />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-3">
+      {typeTabs}
+
       {/* Buy / Sell */}
       <div className="grid grid-cols-2 gap-1 rounded-lg bg-panel2 p-0.5">
         <button
@@ -124,21 +154,6 @@ export default function SpotForm() {
         >
           SELL {baseAsset}
         </button>
-      </div>
-
-      {/* Market / Limit */}
-      <div className="seg">
-        {[
-          { id: 'market', label: 'Market' },
-          { id: 'limit', label: 'Limit' },
-          { id: 'iceberg', label: 'Iceberg' },
-          { id: 'twap', label: 'TWAP' },
-          { id: 'vwap', label: 'VWAP' },
-        ].map((t) => (
-          <button key={t.id} onClick={() => { setOrderType(t.id); setError('') }} data-active={orderType === t.id} className="!text-[11px]">
-            {t.label}
-          </button>
-        ))}
       </div>
 
       {/* Limit price */}

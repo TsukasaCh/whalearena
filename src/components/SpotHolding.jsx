@@ -13,7 +13,7 @@ export default function SpotHolding() {
   const spotSell = useSim((s) => s.spotSell)
 
   // coins committed to resting SELL limits (moved out of the free holding)
-  const inOrders = (spotPending || []).reduce((s, o) => (o.side === 'short' ? s + (o.qty - (o.filled || 0)) : s), 0)
+  const inOrders = (spotPending || []).reduce((s, o) => (o.side === 'short' && !o.grid ? s + (o.qty - (o.filled || 0)) : s), 0) // a grid bot's sells are its own coins
 
   if (!holding || holding.qty <= 0) return null
 

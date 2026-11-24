@@ -53,11 +53,12 @@ const toAccount = (u) => ({
   name: u.name,
   balance: u.balance, trades: u.trades || 0, wins: u.wins || 0, realized: u.realized || 0,
   books: parse(u.books, {}), history: parse(u.history, []), spot: parse(u.spot, {}), staked: parse(u.staked, {}),
+  grids: parse(u.grids, []),
 })
 
 export async function getAccount(name) {
   const u = await storage.findUser((name || '').toLowerCase())
-  if (!u) return { balance: INITIAL_BALANCE, trades: 0, wins: 0, realized: 0, books: {}, history: [], spot: {}, staked: {} }
+  if (!u) return { balance: INITIAL_BALANCE, trades: 0, wins: 0, realized: 0, books: {}, history: [], spot: {}, staked: {}, grids: [] }
   return toAccount(u)
 }
 
