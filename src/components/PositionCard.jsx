@@ -60,6 +60,7 @@ function PendingList() {
 export default function PositionCard() {
   const position = useSim((s) => s.position)
   const hasPending = useSim((s) => s.pendingOrders.length > 0)
+  const hasAlgo = useSim((s) => s.algos.length > 0)
   const price = useSim((s) => s.price)
   const dp = useSim((s) => s.dp)
   const baseAsset = useSim((s) => s.baseAsset)
@@ -72,7 +73,11 @@ export default function PositionCard() {
         <div className="flex flex-col items-center justify-center gap-1 rounded-xl bg-panel2/40 px-4 py-10 text-center">
           <span className="text-[13px] font-medium text-txt">No open position</span>
           <span className="text-xs text-sub">
-            {hasPending ? 'Limit order(s) resting on the book' : 'Open a Long or Short to start'}
+            {hasAlgo
+              ? 'TWAP/VWAP berjalan — posisi terbentuk per slice'
+              : hasPending
+                ? 'Limit order(s) resting on the book'
+                : 'Open a Long or Short to start'}
           </span>
         </div>
       </div>

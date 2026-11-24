@@ -7,6 +7,14 @@ const round = (n) => Math.round(n * 100) / 100
 const r8 = (n) => Math.round(n * 1e8) / 1e8 // coin precision for staking (keep tiny rewards)
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
 
+// Algo (TWAP / VWAP) order limits
+const ALGO_MIN_SEC = 30
+const ALGO_MAX_SEC = 4 * 60 * 60
+const ALGO_MAX_SLICES = 100
+const ALGO_MIN_INTERVAL = 2 // seconds between child orders
+const ALGO_MIN_SLICE = 1 // USDT margin per child order
+const ALGO_MAX_ACTIVE = 3 // per user, per market
+
 // Staking accrual: the staked balance compounds at STAKE_APY. accruedQty is the
 // current balance (read-only); realize folds the rewards into the stake and
 // resets the clock, tracking lifetime `earned` coins.
@@ -25,6 +33,7 @@ export class MarketHub {
   constructor() {
     this.users = new Map() // id -> { id, name, balance, trades, wins, realized, history, spot }
     this.dirty = new Set() // user ids whose wallet changed and needs persisting
+    this.algoUpdates = [] // [{ userId, event? }] produced by the last tick's algo pass
     // Every symbol runs TWO venues: a futures (perp) market and a spot market,
     // each its own price/book/history. Keyed by vkey(symbol, mode) — the perp key
     // is just the symbol so old saved market rows restore as the futures book.
@@ -85,8 +94,9 @@ export class MarketHub {
       const m = this.markets.get(sym)
       if (!m || !b) continue
       const pendingOrders = Array.isArray(b.pendingOrders) ? b.pendingOrders : []
-      if (!b.position && !pendingOrders.length) continue
-      m.books.set(id, { position: b.position || null, pendingOrders })
+      const algos = Array.isArray(b.algos) ? b.algos : []
+      if (!b.position && !pendingOrders.length && !algos.length) continue
+      m.books.set(id, { position: b.position || null, pendingOrders, algos })
     }
     return u
   }
@@ -103,8 +113,8 @@ export class MarketHub {
     for (const [sym, m] of this.markets) {
       const book = m.books.get(id)
       if (!book) continue
-      if (book.position || (book.pendingOrders && book.pendingOrders.length)) {
-        books[sym] = { position: book.position || null, pendingOrders: book.pendingOrders || [] }
+      if (book.position || (book.pendingOrders && book.pendingOrders.length) || (book.algos && book.algos.length)) {
+        books[sym] = { position: book.position || null, pendingOrders: book.pendingOrders || [], algos: book.algos || [] }
       }
     }
     return books
@@ -148,12 +158,14 @@ export class MarketHub {
   //  · perp limit → reserved margin + fee on the unfilled part
   //  · spot buy limit → reserved USDT on the unfilled part
   //  · spot sell limit → the coins it holds, marked at the spot price
+  //  · TWAP/VWAP → the margin + fee still reserved for its unexecuted slices
   userLockedValue(id) {
     let v = 0
     for (const m of this.markets.values()) {
       const book = m.books.get(id)
-      if (!book || !book.pendingOrders) continue
-      for (const o of book.pendingOrders) {
+      if (!book) continue
+      for (const a of book.algos || []) v += a.reserved || 0
+      for (const o of book.pendingOrders || []) {
         const rem = Math.max(0, o.qty - (o.filled || 0))
         if (rem <= 1e-12) continue
         const frac = rem / (o.qty || 1)
@@ -242,6 +254,7 @@ export class MarketHub {
     const cur = m.books.get(id)
     if (cur?.position && cur.position.side !== side) return { ok: false, error: 'Tutup posisi dulu untuk balik arah' }
     if (cur?.pendingOrders.some((o) => o.side !== side)) return { ok: false, error: 'Cancel limit order sisi sebaliknya dulu' }
+    if (cur?.algos?.some((a) => a.side !== side)) return { ok: false, error: 'Cancel TWAP/VWAP sisi sebaliknya dulu' }
     const book = m.book(id)
     // market taker WALKS the book: entry is the size-weighted fill across the
     // resting levels it consumes — other users' limit orders at their price, then
@@ -259,7 +272,7 @@ export class MarketHub {
       u.balance = round(u.balance - margin - fee)
       m.pendingFlow += side === 'long' ? flow : -flow
       this.dirty.add(id)
-      return { ok: true, user: u, symbol, added: true }
+      return { ok: true, user: u, symbol, added: true, fill: { price: entry, qty: addQty } }
     }
     const liq = m.r(liquidationPrice(side, entry, leverage))
     let cleanSl = sl ? +sl : null
@@ -275,7 +288,7 @@ export class MarketHub {
     u.balance = round(u.balance - margin - fee)
     m.pendingFlow += side === 'long' ? flow : -flow
     this.dirty.add(id)
-    return { ok: true, user: u, symbol }
+    return { ok: true, user: u, symbol, fill: { price: entry, qty: addQty } }
   }
 
   closePosition(id, symbol) {
@@ -293,6 +306,8 @@ export class MarketHub {
     const { credit, net, closeFee, record } = closeOut(pos, exit, 'manual', symbol, (n) => m.r(n))
     m.feesCollected += closeFee
     book.position = null
+    // closing by hand also stops any TWAP/VWAP still building this position
+    for (const a of [...(book.algos || [])]) this.endAlgo(u, m, book, a, 'stopped')
     m.dropIfEmpty(id)
     this.settle(id, { credit, pnl: net, record })
     return { ok: true, user: u, symbol, event: { type: 'closed', symbol, pnl: record.pnl, fee: record.fee, price: m.r(exit), id: Date.now() } }
@@ -534,6 +549,7 @@ export class MarketHub {
     const book = m.book(id)
     const committed = book.position ? book.position.side : (book.pendingOrders[0] ? book.pendingOrders[0].side : null)
     if (committed && committed !== side) return { ok: false, error: 'Semua order harus sisi yang sama — cancel/tutup dulu untuk balik arah' }
+    if (book.algos?.some((a) => a.side !== side)) return { ok: false, error: 'Cancel TWAP/VWAP sisi sebaliknya dulu' }
     leverage = clamp(Math.round(+leverage || 1), 1, 100)
     margin = +margin
     price = +price
@@ -600,6 +616,168 @@ export class MarketHub {
     return { ok: true, user: u, symbol }
   }
 
+  // ── algo orders: TWAP / VWAP (futures only) ───────────────────────────────
+  // Both work a large order as a series of small MARKET child orders ("slices")
+  // so it doesn't eat the whole book at once:
+  //  · TWAP — equal slices at equal time intervals.
+  //  · VWAP — same slots, but each slice is sized by how much volume the market
+  //    actually traded since the order started (vs. the recent average), so it
+  //    trades more when the market is busy and less when it's quiet. The last
+  //    slot always completes the order.
+  // The full margin + taker fee is reserved up front (it counts as locked equity)
+  // and released slice by slice; whatever is left is refunded when the order
+  // finishes, is cancelled, or is stopped by the position closing.
+  placeAlgo(id, symbol, { algo, side, leverage, margin, duration, slices, sl, tp }) {
+    const u = this.users.get(id)
+    const m = this.markets.get(symbol)
+    if (!u || !m) return { ok: false, error: 'No session' }
+    if (!m.isPerp) return { ok: false, error: 'TWAP/VWAP hanya tersedia di Futures' }
+    const type = algo === 'twap' || algo === 'vwap' ? algo : null
+    if (!type) return { ok: false, error: 'Tipe order tidak dikenal' }
+    if (!['long', 'short'].includes(side)) return { ok: false, error: 'Bad side' }
+    leverage = clamp(Math.round(+leverage || 1), 1, 100)
+    margin = Math.floor((+margin || 0) * 100) / 100
+    if (!(margin > 0)) return { ok: false, error: 'Invalid margin' }
+    duration = Math.round(+duration)
+    if (!(duration >= ALGO_MIN_SEC && duration <= ALGO_MAX_SEC)) return { ok: false, error: `Durasi harus ${ALGO_MIN_SEC} detik – ${ALGO_MAX_SEC / 3600} jam` }
+    slices = Math.round(+slices)
+    if (!(slices >= 2 && slices <= ALGO_MAX_SLICES)) return { ok: false, error: `Jumlah slice harus 2 – ${ALGO_MAX_SLICES}` }
+    if (duration / (slices - 1) < ALGO_MIN_INTERVAL) return { ok: false, error: `Jarak antar slice minimal ${ALGO_MIN_INTERVAL} detik — kurangi slice atau perpanjang durasi` }
+    if (margin / slices < ALGO_MIN_SLICE) return { ok: false, error: `Margin per slice minimal ${ALGO_MIN_SLICE} — kurangi slice atau tambah margin` }
+    const cur = m.books.get(id)
+    if (cur?.position && cur.position.side !== side) return { ok: false, error: 'Tutup posisi dulu untuk balik arah' }
+    if (cur?.pendingOrders?.some((o) => o.side !== side)) return { ok: false, error: 'Cancel limit order sisi sebaliknya dulu' }
+    if (cur?.algos?.some((a) => a.side !== side)) return { ok: false, error: 'Cancel TWAP/VWAP sisi sebaliknya dulu' }
+    if ((cur?.algos?.length || 0) >= ALGO_MAX_ACTIVE) return { ok: false, error: `Maksimal ${ALGO_MAX_ACTIVE} order TWAP/VWAP aktif per market` }
+    // reserve margin + the taker fee every slice will pay (fee = notional × rate)
+    // (slices are charged against it to the exact sub-cent; the remainder is refunded)
+    const reserve = Math.ceil(margin * (1 + leverage * TAKER_FEE) * 100 - 1e-6) / 100
+    if (reserve > u.balance) return { ok: false, error: 'Saldo tidak cukup (margin + fee taker)' }
+    const now = Date.now()
+    const book = m.book(id)
+    u.balance = round(u.balance - reserve)
+    book.algos.push({
+      id: 'a' + Math.random().toString(36).slice(2, 9),
+      type, side, leverage, margin,
+      sl: sl ? +sl : null, tp: tp ? +tp : null,
+      duration, slices,
+      reserved: reserve, // margin + fee still held for unexecuted slices
+      done: 0, // slots consumed
+      filledMargin: 0, filledQty: 0, cost: 0, // cost = Σ fill price × qty → avg fill = cost / filledQty
+      mVol: 0, mPV: 0, // market volume / price×volume since start → benchmark VWAP = mPV / mVol
+      expVol: m.avgVolPerSec() * duration, // volume the market is expected to trade over the run
+      startedAt: now, nextAt: now, endAt: now + duration * 1000,
+    })
+    this.dirty.add(id)
+    return { ok: true, user: u, symbol }
+  }
+
+  cancelAlgo(id, symbol, algoId) {
+    const u = this.users.get(id)
+    const m = this.markets.get(symbol)
+    if (!u || !m) return { ok: false }
+    const book = m.books.get(id)
+    const a = book?.algos?.find((x) => x.id === algoId)
+    if (!a) return { ok: false }
+    const event = this.endAlgo(u, m, book, a, 'cancelled')
+    m.dropIfEmpty(id)
+    return { ok: true, user: u, symbol, event }
+  }
+
+  // Remove an algo order and hand back whatever margin + fee it still holds.
+  // Returns the toast event describing how it ended.
+  endAlgo(u, m, book, a, status, reason) {
+    if (a.reserved > 0) u.balance = round(u.balance + a.reserved)
+    a.reserved = 0
+    book.algos = (book.algos || []).filter((x) => x.id !== a.id)
+    this.dirty.add(u.id)
+    return {
+      type: 'algo', algo: a.type, status, reason, symbol: m.symbol, side: a.side,
+      avg: a.filledQty > 0 ? m.r(a.cost / a.filledQty) : null,
+      filledMargin: round(a.filledMargin), margin: a.margin,
+      id: Date.now() + Math.random(),
+    }
+  }
+
+  // Execute one child market order of `want` USDT margin out of the reservation.
+  // Returns true (filled), false (nothing to do this slot) or an error string.
+  algoSlice(u, m, book, a, want) {
+    const k = 1 + a.leverage * TAKER_FEE
+    let sm = Math.min(want, a.margin - a.filledMargin, (a.reserved + 1e-6) / k)
+    sm = Math.floor(sm * 100 + 1e-6) / 100
+    if (!(sm >= 0.01)) return false
+    // release this slice's margin + fee, then let it fill as a normal market order
+    // The user's FREE balance is never touched by a slice — only the reservation
+    // shrinks, by exactly what the market order charged (cent-rounded).
+    // It is charged the EXACT margin + taker fee (no per-slice cent rounding, so
+    // many small slices can't round the fee away); only the final refund rounds.
+    const free = u.balance
+    u.balance = free + sm * k + 0.01 // lend the slice its funds for the market-order balance check
+    const r = this.openPosition(u.id, m.symbol, { side: a.side, leverage: a.leverage, margin: sm, sl: a.sl, tp: a.tp })
+    u.balance = free
+    if (!r.ok) return r.error || 'Order gagal'
+    const spent = clamp(sm + r.fill.price * r.fill.qty * TAKER_FEE, 0, a.reserved)
+    a.reserved = Math.max(0, Math.round((a.reserved - spent) * 1e6) / 1e6)
+    a.filledMargin = round(a.filledMargin + sm)
+    a.filledQty += r.fill.qty
+    a.cost += r.fill.price * r.fill.qty
+    return true
+  }
+
+  // Runs once per tick, after every market stepped: advance each algo's market
+  // benchmark and fire the slices that are due.
+  processAlgos(now = Date.now()) {
+    const updates = []
+    for (const m of this.markets.values()) {
+      if (!m.isPerp) continue
+      for (const [uid, book] of m.books) {
+        if (!book.algos || !book.algos.length) continue
+        const u = this.users.get(uid)
+        if (!u) continue
+        for (const a of [...book.algos]) {
+          if (m.lastVol > 0) { a.mVol += m.lastVol; a.mPV += m.lastVol * m.price }
+          if (a.stop) {
+            // position was liquidated / hit SL-TP: end quietly (that toast wins)
+            this.endAlgo(u, m, book, a, 'stopped', a.stop)
+            updates.push({ userId: uid })
+            continue
+          }
+          if (now < a.nextAt) continue
+          const lastSlot = a.slices - a.done <= 1
+          let want
+          if (lastSlot) want = a.margin - a.filledMargin
+          else if (a.type === 'twap') want = a.margin / a.slices
+          else {
+            // share of the schedule this slot should have completed, by time…
+            const timeFrac = clamp((now - a.startedAt) / (a.duration * 1000) + 1 / a.slices, 0, 1)
+            // …and by the volume the market actually traded so far
+            const volFrac = a.expVol > 0 ? a.mVol / a.expVol : timeFrac
+            const target = clamp(volFrac, 0.5 * timeFrac, Math.min(1, 1.6 * timeFrac))
+            want = a.margin * target - a.filledMargin
+            if (want < ALGO_MIN_SLICE) want = 0 // quiet market: sit this slot out
+          }
+          const res = want > 0 ? this.algoSlice(u, m, book, a, want) : false
+          a.done += 1
+          if (typeof res === 'string') {
+            updates.push({ userId: uid, event: this.endAlgo(u, m, book, a, 'failed', res) })
+            continue
+          }
+          if (a.done >= a.slices || a.margin - a.filledMargin < 0.01) {
+            updates.push({ userId: uid, event: this.endAlgo(u, m, book, a, 'done') })
+            continue
+          }
+          a.nextAt += (a.duration * 1000) / (a.slices - 1)
+          if (a.nextAt <= now) a.nextAt = now + 1000 // behind schedule (server was down): catch up gently
+          if (res) this.dirty.add(uid)
+          updates.push({ userId: uid })
+        }
+        m.dropIfEmpty(uid)
+      }
+    }
+    this.algoUpdates = updates
+    return updates
+  }
+
   modify(id, symbol, { sl, tp, trailPct }) {
     const m = this.markets.get(symbol)
     if (!m) return { ok: false }
@@ -633,6 +811,15 @@ export class MarketHub {
   mm(symbol, cmd, payload = {}) {
     const m = this.markets.get(symbol)
     if (!m) return
+    // a reset wipes every book — un-deployed TWAP/VWAP reservations are plain
+    // cash, so refund them first (only the hub owns balances)
+    if (cmd === 'reset') {
+      for (const [uid, book] of m.books) {
+        const u = this.users.get(uid)
+        if (!u) continue
+        for (const a of [...(book.algos || [])]) this.endAlgo(u, m, book, a, 'stopped', 'reset')
+      }
+    }
     // reset wipes / rebase rescales every book in this market — persist that
     if (cmd === 'reset' || cmd === 'rebase') for (const uid of m.books.keys()) this.dirty.add(uid)
     m.mm(cmd, payload)
@@ -663,6 +850,12 @@ export class MarketHub {
     return out
   }
 
+  // does this user have a TWAP/VWAP running anywhere? (drives periodic refreshes)
+  hasAlgos(id) {
+    for (const m of this.markets.values()) { const b = m.books.get(id); if (b && b.algos && b.algos.length) return true }
+    return false
+  }
+
   // ── per-tick advance of every market ──────────────────────────────────────
   tick() {
     // Arbitrage coupling FIRST: pull each symbol's spot & perp toward each other
@@ -670,6 +863,7 @@ export class MarketHub {
     for (const sym of SYMBOLS) this.couple(this.market(sym, 'spot'), this.market(sym, 'perp'))
     const deltas = []
     for (const m of this.markets.values()) deltas.push(m.step())
+    this.processAlgos()
     return deltas
   }
 

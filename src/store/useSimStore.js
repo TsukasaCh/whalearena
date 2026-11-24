@@ -57,6 +57,8 @@ export const useSim = create(
     // mirrors of the ACTIVE symbol's book (kept so existing components work)
     position: null,
     pendingOrders: [],
+    algos: [], // running TWAP / VWAP orders for the active symbol (futures)
+    clockOffset: 0, // server clock − browser clock (ms), so countdowns survive a wrong PC clock
     spotPending: [], // resting spot limit orders for the active symbol
     leaderboard: [],
     toast: null,
@@ -106,7 +108,7 @@ export const useSim = create(
     applySnap: (m) => {
       // re-mirror the active book for the (possibly new) symbol
       const b = bookOf(get().books, m.symbol)
-      set({ position: b.position, pendingOrders: b.pendingOrders, spotPending: spotBookOf(get().books, m.symbol) })
+      set({ position: b.position, pendingOrders: b.pendingOrders, algos: b.algos || [], spotPending: spotBookOf(get().books, m.symbol) })
       get()._applyMarketSnap(m)
     },
 
@@ -167,8 +169,10 @@ export const useSim = create(
         unrealized: m.unrealized ?? get().unrealized,
         position: b.position,
         pendingOrders: b.pendingOrders,
+        algos: b.algos || [],
         spotPending: spotBookOf(books, get().symbol),
       }
+      if (m.now) patch.clockOffset = m.now - Date.now()
       if (m.event) patch.toast = m.event
       set(patch)
     },
@@ -192,7 +196,7 @@ export const useSim = create(
         base: [], deep: [], baseCurrent: null, disp: null,
         resting: [], crowd: emptyCrowd, map: [], book: { tick: 0, asks: [], bids: [] },
         lastLiqEvent: null,
-        position: b.position, pendingOrders: b.pendingOrders,
+        position: b.position, pendingOrders: b.pendingOrders, algos: b.algos || [],
         spotPending: spotBookOf(st.books, symbol),
       })
       const send = st._send
@@ -227,6 +231,8 @@ export const useSim = create(
     setSpotDraft: (patch) => set((s) => ({ spotDraft: { ...s.spotDraft, ...patch } })),
     modifyPosition: (payload) => { const s = get(); s._send && s._send({ type: 'modify', symbol: s.symbol, ...payload }) },
     placeLimit: (payload) => { const s = get(); s._send && s._send({ type: 'limit', symbol: s.symbol, ...payload }) },
+    placeAlgo: (payload) => { const s = get(); s._send && s._send({ type: 'algo', symbol: s.symbol, ...payload }) },
+    cancelAlgo: (id, symbol) => { const s = get(); s._send && s._send({ type: 'cancelAlgo', symbol: symbol || s.symbol, id }) },
     cancelLimit: (id) => { const s = get(); s._send && s._send({ type: 'cancelLimit', symbol: s.symbol, id }) },
     moveLimit: (id, price) => { const s = get(); s._send && s._send({ type: 'moveLimit', symbol: s.symbol, id, price }) },
     mm: (cmd, payload) => { const s = get(); s._send && s._send({ type: 'mm', symbol: s.symbol, cmd, payload }) },

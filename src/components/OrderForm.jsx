@@ -12,6 +12,8 @@ export default function OrderForm() {
   const pendingOrders = useSim((s) => s.pendingOrders)
   const openPosition = useSim((s) => s.openPosition)
   const placeLimit = useSim((s) => s.placeLimit)
+  const placeAlgo = useSim((s) => s.placeAlgo)
+  const algos = useSim((s) => s.algos)
 
   const leverage = useSim((s) => s.orderDraft.leverage)
   const margin = useSim((s) => s.orderDraft.margin)
@@ -19,19 +21,25 @@ export default function OrderForm() {
   const setLeverage = (v) => setOrderDraft({ leverage: v })
   const setMargin = (v) => setOrderDraft({ margin: v })
 
-  const [orderType, setOrderType] = useState('market') // 'market' | 'limit'
+  const [orderType, setOrderType] = useState('market') // 'market' | 'limit' | 'twap' | 'vwap'
   const [side, setSide] = useState('long')
   const [limitPrice, setLimitPrice] = useState('')
   const [sl, setSl] = useState('')
   const [tp, setTp] = useState('')
   const [error, setError] = useState('')
+  // algo orders (TWAP / VWAP): run time in minutes + number of child orders
+  const [minutes, setMinutes] = useState(5)
+  const [slices, setSlices] = useState(10)
 
   const isLimit = orderType === 'limit'
+  const isAlgo = orderType === 'twap' || orderType === 'vwap'
+  const durationSec = Math.round((Number(minutes) || 0) * 60)
+  const sliceCount = Math.round(Number(slices) || 0)
   const feeRate = isLimit ? MAKER_FEE : TAKER_FEE
   const entry = isLimit && Number(limitPrice) > 0 ? Number(limitPrice) : price
 
   // the book is one-directional: position + all resting orders share a side
-  const committed = position ? position.side : pendingOrders[0]?.side || null
+  const committed = position ? position.side : pendingOrders[0]?.side || algos[0]?.side || null
   const sameSide = position && position.side === side // DCA / scale-in into a live position
   const oppSide = committed && committed !== side // blocked (would reverse the book)
 
@@ -54,7 +62,13 @@ export default function OrderForm() {
     const m = Number(margin)
     if (!m || m <= 0) return setError('Masukkan margin yang valid.')
     if (m + m * leverage * feeRate > balance) return setError('Saldo tidak cukup (margin + fee).')
-    if (isLimit) {
+    if (isAlgo) {
+      if (!(durationSec >= 30 && durationSec <= 14400)) return setError('Durasi harus 0.5 – 240 menit.')
+      if (!(sliceCount >= 2 && sliceCount <= 100)) return setError('Jumlah slice harus 2 – 100.')
+      if (durationSec / (sliceCount - 1) < 2) return setError('Jarak antar slice minimal 2 detik.')
+      if (m / sliceCount < 1) return setError('Margin per slice minimal $1.')
+      placeAlgo({ algo: orderType, side, leverage, margin: m, duration: durationSec, slices: sliceCount, sl: sl ? Number(sl) : null, tp: tp ? Number(tp) : null })
+    } else if (isLimit) {
       const lp = Number(limitPrice)
       if (!lp || lp <= 0) return setError('Masukkan harga limit.')
       if (side === 'long' && lp >= price) return setError('Limit buy harus DI BAWAH harga pasar.')
@@ -97,10 +111,12 @@ export default function OrderForm() {
         {[
           { id: 'market', label: 'Market' },
           { id: 'limit', label: 'Limit' },
+          { id: 'twap', label: 'TWAP' },
+          { id: 'vwap', label: 'VWAP' },
         ].map((t) => (
           <button
             key={t.id}
-            onClick={() => setOrderType(t.id)}
+            onClick={() => { setOrderType(t.id); setError('') }}
             className={`-mb-px border-b-2 pb-2 font-semibold transition-colors ${
               orderType === t.id ? 'border-txt text-txt' : 'border-transparent text-sub hover:text-txt'
             }`}
@@ -156,7 +172,7 @@ export default function OrderForm() {
 
       {/* Margin */}
       <div>
-        <div className="mb-1.5 text-sub">Margin (collateral)</div>
+        <div className="mb-1.5 text-sub">{isAlgo ? 'Total margin (collateral)' : 'Margin (collateral)'}</div>
         <div className="field">
           <input type="number" value={margin} min={0} onChange={(e) => setMargin(e.target.value)} />
           <span className="shrink-0 text-sub">USDT</span>
@@ -169,6 +185,55 @@ export default function OrderForm() {
           ))}
         </div>
       </div>
+
+      {/* TWAP / VWAP schedule */}
+      {isAlgo && (
+        <div className="space-y-3">
+          <div className="rounded-lg bg-panel2/60 px-3 py-2 leading-relaxed text-sub">
+            {orderType === 'twap' ? (
+              <>
+                <span className="font-semibold text-txt">TWAP</span> memecah order jadi slice market yang sama besar
+                dengan jeda waktu yang sama, supaya tidak memakan order book sekaligus.
+              </>
+            ) : (
+              <>
+                <span className="font-semibold text-txt">VWAP</span> memakai jadwal yang sama, tapi ukuran tiap slice
+                mengikuti volume pasar: lebih besar saat ramai, lebih kecil saat sepi.
+              </>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="mb-1.5 text-sub">Duration</div>
+              <div className="field">
+                <input type="number" value={minutes} min={0.5} step={0.5} onChange={(e) => setMinutes(e.target.value)} />
+                <span className="shrink-0 text-sub">min</span>
+              </div>
+              <div className="mt-2 flex gap-1">
+                {[1, 5, 15, 60].map((v) => (
+                  <button key={v} onClick={() => setMinutes(v)} data-active={Number(minutes) === v} className="chip flex-1 !px-1">
+                    {v}m
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="mb-1.5 text-sub">Slices</div>
+              <div className="field">
+                <input type="number" value={slices} min={2} max={100} step={1} onChange={(e) => setSlices(e.target.value)} />
+                <span className="shrink-0 text-sub">orders</span>
+              </div>
+              <div className="mt-2 flex gap-1">
+                {[5, 10, 20, 50].map((v) => (
+                  <button key={v} onClick={() => setSlices(v)} data-active={Number(slices) === v} className="chip flex-1 !px-1">
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SL / TP */}
       <div className="grid grid-cols-2 gap-2">
@@ -201,7 +266,9 @@ export default function OrderForm() {
       >
         {oppSide
           ? `Cancel/tutup ${committed.toUpperCase()} dulu untuk balik arah`
-          : isLimit
+          : isAlgo
+            ? `Start ${orderType.toUpperCase()} ${side === 'long' ? 'Long' : 'Short'} ${leverage}x`
+            : isLimit
             ? sameSide
               ? `+ Limit ${side === 'long' ? 'Buy' : 'Sell'} (DCA)`
               : `Place Limit ${side === 'long' ? 'Buy' : 'Sell'}`
@@ -216,6 +283,15 @@ export default function OrderForm() {
           <>
             <Row label="Current entry" value={fmtPrice(position.entry, dp)} valueClass="text-sub" />
             <Row label="→ New avg entry" value={fmtPrice(preview.avg, dp)} valueClass="text-gold font-semibold" />
+          </>
+        )}
+        {isAlgo && sliceCount >= 2 && durationSec > 0 && (
+          <>
+            <Row
+              label={orderType === 'twap' ? 'Per slice' : 'Per slice (avg)'}
+              value={`${orderType === 'twap' ? '' : '≈ '}${usd((Number(margin) || 0) / sliceCount)} margin`}
+            />
+            <Row label="Interval" value={`every ${fmt(durationSec / (sliceCount - 1), durationSec % (sliceCount - 1) ? 1 : 0)}s`} />
           </>
         )}
         <Row label={preview.dca ? 'Total size' : 'Position size'} value={usd(preview.notional)} />

@@ -80,7 +80,7 @@ const flushDirty = () => {
   for (const uid of hub.dirty) persist(uid)
   hub.dirty.clear()
 }
-const meMsg = (uid, event) => ({ type: 'me', ...hub.userState(uid), event })
+const meMsg = (uid, event) => ({ type: 'me', ...hub.userState(uid), event, now: Date.now() })
 
 // ── leaderboard (persisted balances + live equity for the connected) ─────────
 let humanRows = []
@@ -189,6 +189,13 @@ wss.on('connection', async (ws, req) => {
         const r = hub.placeLimit(id, sym, m)
         if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
         persist(id); send(ws, meMsg(id))
+      } else if (m.type === 'algo') {
+        const r = hub.placeAlgo(id, sym, m)
+        if (!r.ok) return send(ws, { type: 'orderError', error: r.error })
+        persist(id); send(ws, meMsg(id))
+      } else if (m.type === 'cancelAlgo') {
+        const r = hub.cancelAlgo(id, sym, m.id)
+        if (r.ok) { persist(id); send(ws, meMsg(id, r.event)) }
       } else if (m.type === 'cancelLimit') {
         const r = hub.cancelLimit(id, sym, m.id)
         if (r.ok) { persist(id); send(ws, meMsg(id)) }
@@ -273,6 +280,13 @@ setInterval(() => {
     }
   }
   for (const uid of touched) persist(uid)
+  // TWAP/VWAP child fills + completions → fresh user state (toast only when one ends)
+  for (const up of hub.algoUpdates) {
+    for (const c of clients) if (c.user.role === 'trader' && c.user.id === up.userId) send(c.ws, meMsg(up.userId, up.event))
+  }
+  hub.algoUpdates = []
+  // keep a running algo's benchmark (market VWAP) fresh between slices
+  if (frame % 8 === 0) for (const c of clients) if (c.user.role === 'trader' && hub.hasAlgos(c.user.id)) send(c.ws, meMsg(c.user.id))
   flushDirty()
   // periodic checkpoint of open books (trailing-stop anchors move without events)
   if (frame % 40 === 0) for (const uid of hub.activeUserIds()) persist(uid)

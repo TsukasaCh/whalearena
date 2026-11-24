@@ -21,6 +21,7 @@ export default function HomeDashboard({ onEnter }) {
   const leaderboard = useSim((s) => s.leaderboard)
   const setSymbol = useSim((s) => s.setSymbol)
   const cancelLimitFor = useSim((s) => s._send)
+  const cancelAlgo = useSim((s) => s.cancelAlgo)
   const [share, setShare] = useState(null)
 
   const totalPnl = equity - STARTING
@@ -30,9 +31,11 @@ export default function HomeDashboard({ onEnter }) {
   // flatten books across every market
   const positions = []
   const pending = []
+  const algos = [] // running TWAP / VWAP orders (their unspent margin is locked too)
   for (const [sym, b] of Object.entries(books || {})) {
     if (b.position) positions.push({ symbol: sym, ...b.position })
     for (const o of b.pendingOrders || []) pending.push({ symbol: sym, ...o })
+    for (const a of b.algos || []) algos.push({ symbol: sym, ...a })
   }
   // spot holdings across every market
   const holdings = []
@@ -114,7 +117,7 @@ export default function HomeDashboard({ onEnter }) {
               <h2 className="mb-4 text-lg font-semibold text-txt">Portfolio</h2>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <Tile label="Available" value={usd(balance)} hint="Free balance" />
-                <Tile label="Futures" value={usd(futuresValue)} hint={`${positions.length} open · ${pending.length} resting`} onClick={() => onEnter('perp')} />
+                <Tile label="Futures" value={usd(futuresValue)} hint={`${positions.length} open · ${pending.length} resting${algos.length ? ` · ${algos.length} algo` : ''}`} onClick={() => onEnter('perp')} />
                 <Tile label="Spot" value={usd(spotValue)} hint={`${holdings.length} coin${holdings.length === 1 ? '' : 's'}`} onClick={() => onEnter('spot')} />
                 <Tile label="Earn" value={usd(stakedValue)} hint={`${(STAKE_APY * 100).toFixed(0)}% APY staking`} onClick={() => onEnter('spot')} />
               </div>
@@ -216,6 +219,26 @@ export default function HomeDashboard({ onEnter }) {
             </Panel>
 
             {/* pending limit orders */}
+            {algos.length > 0 && (
+              <Panel title="Algo orders" right={`${algos.length} running`}>
+                <div className="divide-y divide-border">
+                  {algos.map((a) => (
+                    <div key={a.symbol + a.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5 text-xs">
+                      <button onClick={() => openMarket(a.symbol)} className="flex items-center gap-2 text-left">
+                        <span className="text-sm font-semibold text-txt">{a.symbol}USDT</span>
+                        <span className="rounded bg-panel2 px-1.5 py-0.5 text-[11px] font-semibold text-txt">{a.type.toUpperCase()}</span>
+                        <span className={sideBadge(a.side === 'long')}>{a.side === 'long' ? 'Long' : 'Short'} {a.leverage}x</span>
+                      </button>
+                      <span className="font-mono text-sub">
+                        <span className="text-txt">{usd(a.filledMargin)}</span> / {usd(a.margin)} · slice {Math.min(a.done, a.slices)}/{a.slices}
+                      </span>
+                      <button onClick={() => cancelAlgo(a.id, a.symbol)} className="btn btn-outline btn-sm hover:!border-down hover:text-down">Cancel</button>
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            )}
+
             <Panel title="Pending limit orders" right={`${pending.length} resting`}>
               {pending.length === 0 ? (
                 <Empty>No resting limit orders</Empty>

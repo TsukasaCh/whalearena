@@ -5,6 +5,14 @@ import { fmtPrice, fmtQty, compact } from '../lib/format'
 const LEVELS = 16
 const clean = (n) => Number(n.toPrecision(4)) // tidy grouping tick (no float noise)
 const dpOfTick = (t) => (t > 0 ? Math.max(0, -Math.floor(Math.log10(t))) : 2)
+// one consistent size format for the whole column: 388.32K / 7.51M, small sizes in full
+const fmtSize = (n) => {
+  const a = Math.abs(n)
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + 'B'
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + 'M'
+  if (a >= 1e4) return (n / 1e3).toFixed(2) + 'K'
+  return fmtQty(n)
+}
 
 // The order book now RENDERS the server-authoritative bot ladder (real resting
 // liquidity that market orders walk & consume), with the player's own limit
@@ -149,7 +157,7 @@ function Row({ row, maxSize, tone, pdp }) {
         className={`absolute inset-y-px right-0 ${barBg} transition-[width] duration-300 ease-out`}
         style={{ width: `${w}%`, opacity: real ? 0.45 : row.wall ? 0.28 : 0.13 }}
       />
-      {row.wall && (
+      {row.wall && w < 62 && (
         <div
           className={`absolute inset-y-px w-[2px] ${row.mine ? 'bg-gold' : barBg} ${row.mine ? '' : 'opacity-90'}`}
           style={{ right: `${w}%` }}
@@ -163,8 +171,8 @@ function Row({ row, maxSize, tone, pdp }) {
           </span>
         )}
       </span>
-      <span className={`relative z-10 text-right ${row.wall ? 'font-semibold text-txt' : 'text-txt/80'}`}>{fmtQty(row.size)}</span>
-      <span className="relative z-10 text-right text-txt/55">{fmtQty(row.cum)}</span>
+      <span className={`relative z-10 text-right ${row.wall ? 'font-semibold text-txt' : 'text-txt/80'}`}>{fmtSize(row.size)}</span>
+      <span className="relative z-10 text-right text-txt/55">{fmtSize(row.cum)}</span>
     </div>
   )
 }

@@ -102,6 +102,30 @@ export default function Toast() {
     )
   }
 
+  if (toast.type === 'algo') {
+    const name = (toast.algo || '').toUpperCase()
+    const done = toast.status === 'done'
+    const title =
+      done ? `${name} Completed`
+        : toast.status === 'cancelled' ? `${name} Cancelled`
+          : toast.status === 'failed' ? `${name} Stopped`
+            : `${name} Ended`
+    return (
+      <Shell tone={done ? 'up' : toast.status === 'failed' ? 'down' : 'neutral'}>
+        <Body
+          title={title}
+          sub={
+            <>
+              {sym}{toast.side?.toUpperCase()} · {usd(toast.filledMargin || 0)} / {usd(toast.margin || 0)} margin
+              {toast.avg ? <> · avg {fmtPrice(toast.avg, dp)}</> : null}
+              {toast.status === 'failed' && toast.reason ? <> · {toast.reason}</> : null}
+            </>
+          }
+        />
+      </Shell>
+    )
+  }
+
   if (toast.type === 'limitFill') {
     return (
       <Shell tone="accent">

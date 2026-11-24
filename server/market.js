@@ -139,6 +139,7 @@ export class Market {
     this.books = new Map() // userId -> { position, pendingOrders: [] }
     this.makerEvents = [] // limit fills from market orders, flushed with the next tick
     this.feesCollected = 0 // trading fees paid by real users in this market (the house cut)
+    this.lastVol = 0 // coin volume traded in the most recent tick (feeds VWAP algo orders)
     this.nextFunding = Math.ceil(Date.now() / 1000 / FUNDING_INTERVAL) * FUNDING_INTERVAL
     this.reset(true)
   }
@@ -149,6 +150,7 @@ export class Market {
 
   // fresh 1m + deep history that ENDS exactly on `target` (the live price)
   freshHistory(target) {
+    this.liveBars = 0 // closed 1m bars built from real ticks since this history was generated
     const seed = this.genBaseHistory(BASE_CAP, target)
     const k = target / seed.price
     this.base = seed.base.map((c) => ({ ...c, open: this.r(c.open * k), high: this.r(c.high * k), low: this.r(c.low * k), close: this.r(c.close * k) }))
@@ -176,6 +178,7 @@ export class Market {
       for (const [uid, book] of this.books) {
         book.position = null
         book.pendingOrders = []
+        book.algos = []
       }
     }
     this.initBook()
@@ -261,6 +264,14 @@ export class Market {
       for (const o of book.pendingOrders) {
         o.price = px(o.price); o.sl = px(o.sl); o.tp = px(o.tp)
         o.qty = this.rq(o.qty / f); o.filled = this.rq(o.filled / f)
+      }
+      // running TWAP/VWAP orders: coin quantities rescale, dollar sums stay put,
+      // so the average fill and the market VWAP benchmark both move ×f
+      for (const a of book.algos || []) {
+        a.sl = px(a.sl); a.tp = px(a.tp)
+        a.filledQty = (a.filledQty || 0) / f
+        a.mVol = (a.mVol || 0) / f
+        a.expVol = (a.expVol || 0) / f
       }
     }
     this.bots = []
@@ -353,12 +364,13 @@ export class Market {
 
   book(userId) {
     let b = this.books.get(userId)
-    if (!b) { b = { position: null, pendingOrders: [] }; this.books.set(userId, b) }
+    if (!b) { b = { position: null, pendingOrders: [], algos: [] }; this.books.set(userId, b) }
+    if (!b.algos) b.algos = []
     return b
   }
   dropIfEmpty(userId) {
     const b = this.books.get(userId)
-    if (b && !b.position && (!b.pendingOrders || !b.pendingOrders.length)) this.books.delete(userId)
+    if (b && !b.position && (!b.pendingOrders || !b.pendingOrders.length) && (!b.algos || !b.algos.length)) this.books.delete(userId)
   }
 
   makeBot(price, pLong) {
@@ -783,6 +795,8 @@ export class Market {
       }
     }
 
+    this.lastVol = flowVol
+
     let baseCurrent = {
       ...this.baseCurrent,
       close: newPrice,
@@ -793,6 +807,7 @@ export class Market {
     let finalized = null
     const bucket = nowBucket()
     if (bucket > baseCurrent.time) {
+      this.liveBars = Math.min((this.liveBars || 0) + 1, BASE_CAP)
       finalized = baseCurrent
       this.base.push(baseCurrent)
       if (this.base.length > BASE_CAP) this.base = this.base.slice(-BASE_CAP)
@@ -834,6 +849,9 @@ export class Market {
       this.settle(uid, { credit, pnl: net, record })
       userEvents.push({ userId: uid, symbol: this.symbol, event: { type: hit.level, symbol: this.symbol, side: pos.side, pnl: record.pnl, fee: record.fee, price: this.r(exit), id: Date.now() + Math.random() } })
       book.position = null
+      // the position was closed out (liq / SL / TP / trail) — a running TWAP/VWAP
+      // must not keep rebuilding it; the hub ends the order and refunds the rest
+      for (const a of book.algos || []) a.stop = hit.level
       this.dropIfEmpty(uid)
     }
 
@@ -927,6 +945,20 @@ export class Market {
 
   mapData() {
     return this.mapEntries().map((e) => ({ l: this.r(e.liq), s: e.side === 'long' ? 1 : 0, n: Math.round(e.notional), r: e.real ? 1 : 0 }))
+  }
+
+  // average traded coin volume per second over the last `bars` closed 1m candles
+  // (the VWAP algo's expected-volume baseline)
+  // Only bars made of live ticks count: generated / bridged history has a
+  // different volume scale. The first live bar is partial, so skip it; with too
+  // little live data this returns 0 and VWAP falls back to time pacing.
+  avgVolPerSec(bars = 30) {
+    const n = Math.min(bars, (this.liveBars || 0) - 1, this.base.length)
+    if (n < 2) return 0
+    const src = this.base.slice(-n)
+    let v = 0
+    for (const c of src) v += c.volume || 0
+    return v / (src.length * BASE_PERIOD)
   }
 
   // 24h change from the live base (~1440 1m bars ago), falling back to deep history
