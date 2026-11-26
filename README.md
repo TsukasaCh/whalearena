@@ -329,10 +329,28 @@ supply) when the two differ. The supplies are rough real-world figures, except
 **RCLD** — the game's own token — which has **200M circulating out of a 1B total
 supply**. Edit them there.
 
-### Generated candle history
+### Candle history: real market data
 
-A fresh market needs months of candles before anyone has traded. They come from
-`synthPath()` in `server/market.js`: a **log random walk with volatility clustering**
+A fresh market needs months of candles before anyone has traded. At boot the server
+downloads each coin's **real recent history** from Binance's public market-data API
+(`server/realHistory.js`: 10 days of 1-minute candles plus ~3 months of hourly
+candles; no API key, nothing about players is sent) and uses it for the charts.
+
+- Only the **shape** is taken: prices are rescaled so the last close equals the
+  game's own price for that market. Positions, balances and the game's price
+  levels are untouched — the chart simply shows the real moves that led "here".
+  Volumes are rescaled to the game's volume scale, and both the futures and the
+  spot market of a coin use the same series.
+- It is **best effort**. A coin Binance does not list or no longer trades (the
+  game's own RCLD, currently TON), a blocked network or a timeout leaves that
+  market on generated history; the boot log says which coins got which.
+- Saved markets are rebuilt once real data is available: they keep their price and
+  stats and only their candle history is replaced.
+- Boot waits for the download (about 10 s, capped at 60 s). Set `REAL_HISTORY=0`
+  to skip it, or `REAL_HISTORY_API` to point at another Binance-compatible
+  `/api/v3/klines` endpoint.
+
+**Generated history** (the fallback) comes from `synthPath()` in `server/market.js`: a **log random walk with volatility clustering**
 (quiet stretches and bursts), short-lived trends and the occasional impulse bar, plus
 a faint long-horizon pull so multi-month ranges stay plausible. Because it is a walk
 rather than noise around one level, **the visible price range grows with the
@@ -362,7 +380,10 @@ chart re-fits its price axis whenever you switch timeframe or market.
   everyone (name and equity); the choice is stored with the account (`lb_hidden`
   column) and survives restarts. Trading is unaffected.
 - **Chart legend** — hover any candle for an O/H/L/C + change% + Volume readout
-  (top-left), plus a **volume histogram** under the candles.
+  (top-left), plus a **volume histogram** under the candles. The highest high and
+  lowest low of the visible range are labelled with their price on the wick.
+- **Coin logos** — every market has a small inline-SVG logo (`CoinIcon.jsx`); add
+  an entry there for a new coin, otherwise it falls back to a letter badge.
 - **Click-to-trade on the chart** (OKX-style) — hover anywhere on the chart and a
   one-click chip appears at the cursor's price: **▲ Limit Long** when you're below
   the mark, **▼ Limit Short** when above (the valid maker side for that level). Click

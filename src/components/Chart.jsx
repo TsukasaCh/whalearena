@@ -119,6 +119,59 @@ export default function Chart() {
       chart.addLineSeries({ color: ma.color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
     )
     let closes = [] // { time, close } of every displayed candle, for live MA updates
+    // --- high / low of the visible range, labelled next to the wicks (OKX-style) ---
+    // The labels are small DOM overlays ("← 61,249.22"), not chart markers, so they
+    // can flip to the other side of the candle instead of being cut off at an edge.
+    let bars = [] // { time, high, low } of every displayed candle
+    const renderMarkers = () => {
+      const all = [...markersRef.current].sort((a, b) => a.time - b.time)
+      try { series.setMarkers(all) } catch (e) { /* noop */ }
+    }
+    const mkLabel = () => {
+      const d = document.createElement('div')
+      d.style.cssText = 'position:absolute;z-index:3;pointer-events:none;white-space:nowrap;display:none;font:11px Inter,system-ui,sans-serif;font-variant-numeric:tabular-nums;color:#c9c9c9;text-shadow:0 0 3px #121212,0 0 3px #121212'
+      el.appendChild(d)
+      return d
+    }
+    const hiEl = mkLabel()
+    const loEl = mkLabel()
+    const placeLabel = (node, bar, price) => {
+      const x = bar ? chart.timeScale().timeToCoordinate(bar.time) : null
+      const y = bar ? series.priceToCoordinate(price) : null
+      const paneW = chart.timeScale().width()
+      if (x == null || y == null || x < 0 || x > paneW) { node.style.display = 'none'; return }
+      const txt = fmtPrice(price, useSim.getState().dp || 2)
+      node.style.display = 'block'
+      node.textContent = `← ${txt}`
+      const w = node.offsetWidth
+      // sit to the right of the wick; flip to the left when there is no room
+      if (x + 6 + w > paneW) { node.textContent = `${txt} →`; node.style.left = `${Math.max(0, x - 6 - node.offsetWidth)}px` }
+      else node.style.left = `${x + 6}px`
+      node.style.top = `${Math.round(y - 7)}px`
+    }
+    const updateExtremes = () => {
+      let range = null
+      try { range = chart.timeScale().getVisibleLogicalRange() } catch (e) { return }
+      let hi = null, lo = null
+      if (range && bars.length) {
+        // same rounding the chart uses for "which bars are on screen"
+        const from = Math.max(0, Math.round(range.from))
+        const to = Math.min(bars.length - 1, Math.round(range.to))
+        for (let i = from; i <= to; i++) {
+          const b = bars[i]
+          if (!hi || b.high > hi.high) hi = b
+          if (!lo || b.low < lo.low) lo = b
+        }
+      }
+      const show = hi && lo && hi.high > lo.low
+      placeLabel(hiEl, show ? hi : null, show ? hi.high : 0)
+      placeLabel(loEl, show ? lo : null, show ? lo.low : 0)
+    }
+    let extremesTimer = null
+    const scheduleExtremes = () => {
+      if (extremesTimer) return
+      extremesTimer = setTimeout(() => { extremesTimer = null; updateExtremes() }, 120)
+    }
 
     const view = () => {
       const s = useSim.getState()
@@ -144,14 +197,17 @@ export default function Chart() {
       lastCount = candles.length
       series.setData(candles)
       closes = candles.map((c) => ({ time: c.time, close: c.close }))
+      bars = candles.map((c) => ({ time: c.time, high: c.high, low: c.low }))
       MAS.forEach((ma, i) => {
         maLines[i].applyOptions({ priceFormat })
         maLines[i].setData(smaSeries(candles, ma.n))
       })
       vol.setData(candles.map((c) => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? UPV : DOWNV })))
       setRecentRange()
+      scheduleExtremes()
     }
     setAll()
+    chart.timeScale().subscribeVisibleLogicalRangeChange(scheduleExtremes)
 
     // --- OHLC legend (TradingView-style) ---
     let hovering = false
@@ -267,9 +323,16 @@ export default function Chart() {
     // refit here — a stray fitContent() on the first real width would zoom out
     // to the whole deep history and shrink every candle to a hairline.
     let sized = false
+    const applyTopMargin = () => {
+      const h = el.clientHeight || 1
+      chart.priceScale('right').applyOptions({ scaleMargins: { top: Math.min(0.3, Math.max(0.06, 58 / h)), bottom: 0.24 } })
+    }
+    applyTopMargin()
     const ro = new ResizeObserver(() => {
       const w = el.clientWidth
       chart.applyOptions({ width: w, height: el.clientHeight })
+      applyTopMargin()
+      scheduleExtremes()
       if (!sized && w > 50) { setRecentRange(); sized = true } // re-anchor once real width exists
     })
     ro.observe(el)
@@ -286,6 +349,10 @@ export default function Chart() {
           const last = closes[closes.length - 1]
           if (last && last.time === disp.time) last.close = disp.close
           else closes.push({ time: disp.time, close: disp.close })
+          const lastBar = bars[bars.length - 1]
+          if (lastBar && lastBar.time === disp.time) { lastBar.high = disp.high; lastBar.low = disp.low }
+          else bars.push({ time: disp.time, high: disp.high, low: disp.low })
+          scheduleExtremes()
           const vals = latestMA()
           vals.forEach((v, i) => { if (v != null) maLines[i].update({ time: disp.time, value: v }) })
           if (!hovering) renderMA(vals)
@@ -404,11 +471,7 @@ export default function Chart() {
           })
           if (arr.length > 40) arr.shift()
         }
-        try {
-          series.setMarkers(arr)
-        } catch (e) {
-          /* noop */
-        }
+        renderMarkers()
       }
     )
     const unsubEpoch = useSim.subscribe(
@@ -428,6 +491,10 @@ export default function Chart() {
     )
 
     return () => {
+      if (extremesTimer) clearTimeout(extremesTimer)
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(scheduleExtremes)
+      hiEl.remove()
+      loEl.remove()
       ro.disconnect()
       unsubDisp()
       unsubPos()

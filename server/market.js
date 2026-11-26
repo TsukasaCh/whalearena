@@ -3,6 +3,7 @@ import {
   MMR, BOT_TARGET, BOT_MAX, INITIAL_BOTS, DEPTH_REF, SPOT_DEPTH_SCALE,
   TAKER_FEE, MAKER_FEE, FUNDING_INTERVAL, FUNDING_BASE, FUNDING_K, FUNDING_CAP, FUNDING_FLOW,
 } from './constants.js'
+import { getReal } from './realHistory.js'
 
 // Round to a market's own precision (BTC → cents, DOGE → 6dp, PEPE → 10dp).
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
@@ -160,12 +161,57 @@ export class Market {
   // fresh 1m + deep history that ENDS exactly on `target` (the live price)
   freshHistory(target) {
     this.liveBars = 0 // closed 1m bars built from real ticks since this history was generated
+    // prefer the coin's REAL recent history (downloaded at boot), rescaled to end on `target`
+    this.histReal = this.realHistory(target)
+    if (this.histReal) return
     const seed = this.genBaseHistory(BASE_CAP, target)
     const k = target / seed.price
     this.base = seed.base.map((c) => ({ ...c, open: this.r(c.open * k), high: this.r(c.high * k), low: this.r(c.low * k), close: this.r(c.close * k) }))
     this.deep = this.genDeepHistory(HIST_HOURS, this.base[0].open, this.base[0].time)
     this.price = this.r(target)
     this.baseCurrent = { time: seed.nextTime, open: this.price, high: this.price, low: this.price, close: this.price, volume: 0 }
+  }
+
+  // Build base (1m) + deep (hourly) history from the coin's real candles, keeping
+  // their shape but rescaling prices so the last close is exactly `target` — the
+  // game keeps its own price level, the chart shows the real moves that led "here".
+  // Volumes are rescaled to the game's own volume scale. Returns false when no
+  // real data is available for this coin (the caller then generates history).
+  realHistory(target) {
+    const real = getReal(this.symbol)
+    if (!real || !(target > 0)) return false
+    const m1 = real.m1.slice(-BASE_CAP)
+    if (m1.length < 720) return false
+    const k = target / m1[m1.length - 1].c
+    if (!(k > 0) || !Number.isFinite(k)) return false
+    // volume: match the median real 1m bar to a typical generated one
+    const vols = m1.map((b) => b.v).filter((v) => v > 0).sort((a, b) => a - b)
+    const median = vols.length ? vols[vols.length >> 1] : 0
+    const vk = median > 0 ? (37 * (DEPTH_REF / target)) / median : 0
+    const bar = (b, time, kk, vv) => ({
+      time,
+      open: this.r(b.o * kk), high: this.r(b.h * kk), low: this.r(b.l * kk), close: this.r(b.c * kk),
+      volume: Math.round(b.v * vv * 100) / 100,
+    })
+    // re-time onto our own clock: the newest real bar becomes "one minute ago"
+    const now = nowBucket()
+    const t0 = now - m1.length * BASE_PERIOD
+    const base = m1.map((b, i) => bar(b, t0 + i * BASE_PERIOD, k, vk))
+    // hourly bars from BEFORE the 1m window, ending on the first base bar's open
+    const firstRealT = m1[0].t
+    const h1 = real.h1.filter((b) => b.t + 3600 <= firstRealT).slice(-HIST_HOURS)
+    let deep = []
+    if (h1.length) {
+      const kd = base[0].open / h1[h1.length - 1].c
+      const endHour = Math.floor(base[0].time / 3600) * 3600
+      const startHour = endHour - h1.length * 3600
+      deep = h1.map((b, i) => bar(b, startHour + i * 3600, kd, vk))
+    }
+    this.base = base
+    this.deep = deep
+    this.price = this.r(target)
+    this.baseCurrent = { time: now, open: this.price, high: this.price, low: this.price, close: this.price, volume: 0 }
+    return true
   }
 
   reset(initial = false) {
@@ -200,6 +246,7 @@ export class Market {
     const pack = (c) => [c.time, c.open, c.high, c.low, c.close, c.volume]
     return {
       v: HIST_VERSION,
+      real: !!this.histReal, // candle history came from real market data
       price: this.price,
       anchor: this.anchor,
       seedPrice: this.seedPrice,
@@ -214,7 +261,8 @@ export class Market {
 
   restore(st) {
     if (!st || !(st.v >= 1 && st.v <= HIST_VERSION) || !(st.price > 0) || !st.baseCurrent || !Array.isArray(st.base) || !st.base.length) return false
-    if (st.v !== HIST_VERSION) {
+    // also rebuild a generated history once real data for this coin is available
+    if (st.v !== HIST_VERSION || (!st.real && getReal(this.symbol))) {
       // old save: its generated candles hugged one level on every timeframe.
       // Keep the price (open positions resume exactly where they were) and the
       // market stats, but rebuild the chart history so it ends on that price.
@@ -240,6 +288,7 @@ export class Market {
     this.base = st.base.map(unpack)
     this.deep = Array.isArray(st.deep) ? st.deep.map(unpack) : this.deep
     this.baseCurrent = st.baseCurrent
+    this.histReal = !!st.real // describes the candles restored from the save, not this boot's download
     // the server was down: close the open bar and bridge the gap up to now with
     // candles that wander but END on the saved price, so open positions resume at
     // exactly the price they left off at (no PnL jump, no retro SL/liq hits)

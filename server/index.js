@@ -7,12 +7,23 @@ import { existsSync } from 'fs'
 import { MarketHub } from './engine.js'
 import { TICK_MS, DEFAULT_SYMBOL } from './constants.js'
 import { initStorage, storage } from './storage.js'
+import { loadRealHistory } from './realHistory.js'
+import { SYMBOLS } from './constants.js'
 import { register, login, hostLogin, verify, getAccount, activeAccounts, saveAccount, topTraders, HOST_CODE, HOST_CODE_FROM_ENV } from './auth.js'
 
 const __dir = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 8787
 
 await initStorage()
+
+// real candle history for the charts (best effort — see realHistory.js). It has
+// to be in memory before the markets are created / restored below.
+{
+  const t0 = Date.now()
+  const { loaded, skipped } = await loadRealHistory(SYMBOLS)
+  if (loaded.length) console.log(`Real price history loaded for ${loaded.length} coin(s) in ${((Date.now() - t0) / 1000).toFixed(1)}s: ${loaded.join(', ')}`)
+  if (skipped.length) console.log(`Generated history for: ${skipped.map(([s, why]) => `${s} (${why})`).join(', ')}`)
+}
 
 const app = express()
 app.use(express.json())

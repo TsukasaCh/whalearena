@@ -40,17 +40,5 @@ export function Pill({ active, onClick, children, tone = 'neutral' }) {
   )
 }
 
-// Round coin badge (first letters of the ticker) used next to market names.
-export function CoinIcon({ symbol = '', size = 28, className = '' }) {
-  let h = 0
-  for (let i = 0; i < symbol.length; i++) h = (h * 31 + symbol.charCodeAt(i)) % 360
-  return (
-    <span
-      className={`inline-flex shrink-0 items-center justify-center rounded-full font-bold text-white ${className}`}
-      style={{ width: size, height: size, fontSize: Math.max(9, size * 0.36), background: `hsl(${h} 55% 42%)` }}
-      aria-hidden="true"
-    >
-      {symbol.slice(0, symbol.length > 3 ? 2 : 1).toUpperCase()}
-    </span>
-  )
-}
+// Coin logos live in their own file; re-exported here so existing imports keep working.
+export { default as CoinIcon } from './CoinIcon'
