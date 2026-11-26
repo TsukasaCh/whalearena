@@ -63,6 +63,19 @@ export const BASIS_PULL = 0.06 // per-tick fraction of the spot/perp gap arbitra
 export const STAKE_APY = 0.07 // 7% annual
 export const YEAR_MS = 365 * 24 * 60 * 60 * 1000
 
+// ── Price band ───────────────────────────────────────────────────────────────
+// Every market has a slow "fair value" anchor. The live price is pulled back
+// toward it and hard-capped to a band around it, and the anchor itself drifts
+// after the price but may not leave a range around the market's seed price. That
+// keeps the big coins from running away — and it is also what stops a coin from
+// going on a real run. A market can override any of these with its own `band`.
+export const DEFAULT_BAND = {
+  price: [0.5, 2], // hard cap on price, as multiples of the anchor
+  anchor: [0.4, 2.4], // range the anchor may reach, as multiples of the seed price
+  follow: 0.0003, // per-tick share of the price/anchor gap the anchor closes (higher = moves stick)
+  pull: 0.0006, // per-tick share of that gap the price is pulled back (higher = moves fade faster)
+}
+
 // ── Tradable markets ────────────────────────────────────────────────────────
 // Each market runs its own price sim, order book, bots and history. `price` is
 // the seed spot; `vol` scales that market's live/hist volatility (alts chop more
@@ -82,7 +95,13 @@ export const MARKETS = [
   { symbol: 'TRX', name: 'TRON',      base: 'TRX',  price: 0.145,   vol: 1.2, dp: 6, supply: 87e9 },
   { symbol: 'TON', name: 'Toncoin',   base: 'TON',  price: 5.4,     vol: 1.5, dp: 4, supply: 2.5e9 },
   { symbol: 'PEPE', name: 'Pepe',     base: 'PEPE', price: 0.0000092, vol: 2.2, dp: 10, supply: 420.69e12, total: 420.69e12 },
-  { symbol: 'RCLD', name: 'RCLD',     base: 'RCLD', price: 0.5,       vol: 2.0, dp: 5, supply: 200e6, total: 1e9 },
+  // RCLD is the game's own coin: a free-floating band so buying pressure can take
+  // it on a real run (up to 20× above / 20× below fair value at once, and fair
+  // value itself re-anchors within about a minute instead of springing back).
+  {
+    symbol: 'RCLD', name: 'RCLD', base: 'RCLD', price: 0.5, vol: 2.0, dp: 5, supply: 200e6, total: 1e9,
+    band: { price: [0.05, 20], anchor: [0.02, 5000], follow: 0.004, pull: 0.0001 },
+  },
 ]
 export const SYMBOLS = MARKETS.map((m) => m.symbol)
 export const DEFAULT_SYMBOL = 'BTC'

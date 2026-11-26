@@ -231,6 +231,12 @@ gentle mean-reversion pulls price back toward it over minutes and a hard band
 (`0.5×…2×` the anchor) caps it, so whale moves persist for a while but the market
 can never run away.
 
+That band is per market (`DEFAULT_BAND` in `server/constants.js`; a market can
+override it with its own `band`). **RCLD**, the game's own coin, uses a
+free-floating band: its fair value re-anchors to the traded price within about a
+minute and the cap is far wider, so sustained buying (or a whale pump) can take it
+on a real run instead of topping out at 2× and springing back.
+
 ### Iceberg orders
 
 An **iceberg** is a limit order that shows only part of its size. Pick the

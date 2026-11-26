@@ -1,6 +1,6 @@
 import {
   BASE_PERIOD, BASE_VOL, HIST_VOL, BASE_CAP, HIST_HOURS,
-  MMR, BOT_TARGET, BOT_MAX, INITIAL_BOTS, DEPTH_REF, SPOT_DEPTH_SCALE,
+  MMR, BOT_TARGET, BOT_MAX, INITIAL_BOTS, DEPTH_REF, SPOT_DEPTH_SCALE, DEFAULT_BAND,
   TAKER_FEE, MAKER_FEE, FUNDING_INTERVAL, FUNDING_BASE, FUNDING_K, FUNDING_CAP, FUNDING_FLOW,
 } from './constants.js'
 import { getReal } from './realHistory.js'
@@ -138,6 +138,7 @@ export class Market {
     this.baseAsset = cfg.base
     this.dp = cfg.dp
     this.volScale = cfg.vol || 1
+    this.band = { ...DEFAULT_BAND, ...(cfg.band || {}) } // price cap / anchor behaviour (see constants.js)
     this.supply = cfg.supply || 0 // circulating coins (for market cap)
     this.totalSupply = cfg.total || 0 // total / max supply (for FDV), 0 = uncapped
     this.seedPrice = cfg.price
@@ -817,9 +818,10 @@ export class Market {
     }
     if (queue.length === 0) spike = false
 
-    dPrice += (this.anchor - prev) * 0.0006
-    let newPrice = clamp(this.r(prev + dPrice), this.anchor * 0.5, this.anchor * 2)
-    this.anchor = clamp(this.anchor * (1 + (Math.random() - 0.5) * 0.0004) + (newPrice - this.anchor) * 0.0003, this.seedPrice * 0.4, this.seedPrice * 2.4)
+    const band = this.band
+    dPrice += (this.anchor - prev) * band.pull
+    let newPrice = clamp(this.r(prev + dPrice), this.anchor * band.price[0], this.anchor * band.price[1])
+    this.anchor = clamp(this.anchor * (1 + (Math.random() - 0.5) * 0.0004) + (newPrice - this.anchor) * band.follow, this.seedPrice * band.anchor[0], this.seedPrice * band.anchor[1])
     this.momentum = this.momentum * 0.94 + (newPrice / prev - 1) * 0.06
 
     // real resting limit orders act as support/resistance and fill over ticks
@@ -854,7 +856,7 @@ export class Market {
           const leftover = beyond - remaining
           cur = down ? w.P - leftover / rho : w.P + leftover / rho
         }
-        newPrice = this.r(clamp(cur, this.anchor * 0.5, this.anchor * 2))
+        newPrice = this.r(clamp(cur, this.anchor * band.price[0], this.anchor * band.price[1]))
       }
     }
 
